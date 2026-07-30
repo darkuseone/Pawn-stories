@@ -1,0 +1,195 @@
+name: Build video
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Имя файла в jobs/ без .json'
+        required: true
+        default: 'auction-01'
+      stage:
+        description: 'material / assets / render / auto'
+        required: true
+        default: 'auto'
+
+# Триггера на push здесь намеренно нет. С несколькими спецификациями в
+# репозитории правка любой из них запускала бы полную сборку не того ролика.
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330      # лимит GitHub 360, оставляем запас на выкладку
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ставим FFmpeg и библиотеки
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --upgrade pip --quiet
+          python -m pip install --quiet pillow requests numpy
+          fc-list | grep -qi dejavu || sudo apt-get install -y -qq fonts-dejavu
+          echo "ffmpeg: $(ffmpeg -version | head -1)"
+
+      - name: Какой ролик собираем
+        id: pick
+        run: |
+          set -e
+          JOB="${{ github.event.inputs.job }}"
+          STAGE="${{ github.event.inputs.stage }}"
+          test -f "jobs/$JOB.json" || { echo "Нет файла jobs/$JOB.json"; exit 1; }
+          # Папка работ называется по полю id ВНУТРИ спецификации, а не по
+          # имени файла: они могут не совпадать, и тогда кэш и выкладка
+          # смотрят в несуществующую папку.
+          ID=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['id'])" "jobs/$JOB.json")
+          echo "job=$JOB"     >> $GITHUB_OUTPUT
+          echo "stage=$STAGE" >> $GITHUB_OUTPUT
+          echo "id=$ID"       >> $GITHUB_OUTPUT
+          echo "Собираю: $JOB (папка work/$ID), этап: $STAGE"
+
+      - name: Проверка секретов
+        env:
+          XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          PEXELS_API_KEY:     ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY:    ${{ secrets.PIXABAY_API_KEY }}
+          # Только факт наличия, не значения: Variables в логах НЕ маскируются.
+          SAME_NAMES_IN_VARS: ${{ vars.XAI_API_KEY != '' || vars.ELEVENLABS_API_KEY != '' || vars.PEXELS_API_KEY != '' || vars.PIXABAY_API_KEY != '' }}
+        run: |
+          # На material и render генерация и озвучка не запускаются, их ключи
+          # там не нужны — иначе бесплатный добор падал бы из-за xAI.
+          # material не требует ничего обязательного: четыре источника из
+          # семи открыты и работают без ключей (Wikimedia, Met, Library of
+          # Congress, archive.org). Без Pexels и Pixabay не будет только
+          # стокового видео — этап соберёт архивные фото и листы отбора,
+          # а не упадёт. Проверка, которая роняет работающий прогон, хуже
+          # отсутствующей.
+          case "${{ steps.pick.outputs.stage }}" in
+            material) need="" ; want="PEXELS_API_KEY PIXABAY_API_KEY" ;;
+            render)   need="" ; want="" ;;
+            *)        need="XAI_API_KEY ELEVENLABS_API_KEY PEXELS_API_KEY PIXABAY_API_KEY" ; want="" ;;
+          esac
+          for k in $want; do
+            eval "v=\$$k"
+            if [ -z "$v" ]; then
+              echo "нет:   $k — стокового видео не будет, архивные фото соберутся"
+            else
+              echo "есть:  $k"
+            fi
+          done
+          miss=0
+          for k in $need; do
+            eval "v=\$$k"
+            if [ -z "$v" ]; then echo "ПУСТО: $k"; miss=1; else echo "есть:  $k"; fi
+          done
+          if [ $miss -ne 0 ]; then
+            echo
+            echo "Settings -> Secrets and variables -> Actions -> вкладка Secrets"
+            echo "(именно Repository secrets, имена посимвольно)"
+            if [ "$SAME_NAMES_IN_VARS" = "true" ]; then
+              echo "НАЙДЕНО: ключи с этими именами лежат во вкладке Variables."
+              echo "Их надо перенести в Secrets: значения Variables видны в логах."
+            fi
+            exit 1
+          fi
+
+      # Ключ уникален на запуск, восстановление по префиксу берёт самую
+      # свежую запись. С постоянным ключом cache не сохраняет ничего.
+      - name: Достаём материалы из кэша
+        uses: actions/cache/restore@v4
+        with:
+          path: work/${{ steps.pick.outputs.id }}/assets
+          key: assets-${{ steps.pick.outputs.id }}-v1-${{ github.run_id }}
+          restore-keys: |
+            assets-${{ steps.pick.outputs.id }}-v1-
+
+      - name: Этап 0 — добор материала и листы отбора
+        if: steps.pick.outputs.stage == 'material'
+        env:
+          PEXELS_API_KEY:  ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+        run: |
+          set -e
+          python pipeline/assets.py jobs/${{ steps.pick.outputs.job }}.json material
+          python pipeline/preview.py jobs/${{ steps.pick.outputs.job }}.json
+
+      - name: Выдаём листы отбора
+        if: steps.pick.outputs.stage == 'material'
+        uses: actions/upload-artifact@v4
+        with:
+          name: select-${{ steps.pick.outputs.job }}
+          path: work/${{ steps.pick.outputs.id }}/out/select_*.jpg
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Этап 1 — озвучка, изображения, материал
+        if: steps.pick.outputs.stage != 'render' && steps.pick.outputs.stage != 'material'
+        env:
+          XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          PEXELS_API_KEY:     ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY:    ${{ secrets.PIXABAY_API_KEY }}
+        run: python pipeline/assets.py jobs/${{ steps.pick.outputs.job }}.json
+
+      # Только если что-то качали. На чистом перерендере папка не менялась.
+      - name: Кладём материалы в кэш
+        if: steps.pick.outputs.stage != 'render'
+        uses: actions/cache/save@v4
+        with:
+          path: work/${{ steps.pick.outputs.id }}/assets
+          key: assets-${{ steps.pick.outputs.id }}-v1-${{ github.run_id }}
+
+      - name: Этап 2 — монтаж
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material'
+        run: python pipeline/build.py jobs/${{ steps.pick.outputs.job }}.json
+
+      - name: Этап 3 — комплект для YouTube
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material'
+        run: python pipeline/youtube.py jobs/${{ steps.pick.outputs.job }}.json
+
+      - name: Находим готовое
+        id: out
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material'
+        run: |
+          set -e
+          DIR=work/${{ steps.pick.outputs.id }}/out
+          test -f "$DIR/final.mp4" || { echo "final.mp4 не найден"; find work -type f | head -40; exit 1; }
+          echo "dir=$DIR" >> $GITHUB_OUTPUT
+          ls -la "$DIR"
+
+      - name: Выдаём ролик
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: final-${{ steps.pick.outputs.job }}
+          name: Готово — ${{ steps.pick.outputs.job }}
+          files: |
+            ${{ steps.out.outputs.dir }}/final.mp4
+            ${{ steps.out.outputs.dir }}/subs.srt
+          fail_on_unmatched_files: true
+
+      - name: Комплект для выкладки отдельно
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material'
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-${{ steps.pick.outputs.job }}
+          path: |
+            ${{ steps.out.outputs.dir }}/youtube.txt
+            ${{ steps.out.outputs.dir }}/thumbnail.jpg
+            ${{ steps.out.outputs.dir }}/subs.srt
+          retention-days: 30
+
+      - name: Диагностика при падении
+        if: failure()
+        run: |
+          echo "=== папки ==="; find work -maxdepth 4 -type d 2>/dev/null || echo "нет"
+          echo "=== файлы ==="; find work -maxdepth 4 -type f 2>/dev/null | head -40 || true

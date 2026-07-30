@@ -1,0 +1,689 @@
+"""
+assets.py — собирает всё, из чего потом монтируется ролик.
+
+Три источника:
+  1. ElevenLabs — озвучка блоками, с посимвольными тайм-кодами.
+     Тайм-коды нужны, чтобы кадры менялись на границах предложений,
+     а не по таймеру. Механическая нарезка через равные промежутки
+     видна зрителю сразу.
+  2. xAI — генерация изображений. Через batch вдвое дешевле, но до суток.
+  3. Шесть открытых архивов — реальные фото и хроника. Только
+     общественное достояние и CC0, всё что требует атрибуции отсекается.
+"""
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+import requests
+
+UA = {"User-Agent": "sleep-docs-pipeline/1.0 (educational video project)"}
+TIMEOUT = 60
+
+# Потолки на скачивание материала. Ролику нужны отрывки на 5-15 секунд,
+# и ничего тяжелее сюда не требуется. Без потолков этап 1 однажды провисел
+# 37 минут на одном файле с archive.org.
+MAX_FILE_BYTES = 120 * 1024 * 1024      # 120 МБ на файл
+FETCH_SECONDS = 90                      # столько ждём один файл
+GATHER_BUDGET = 420                     # столько всего на один сбор
+
+
+def log(*a):
+    print(*a, flush=True)
+
+
+# ────────────────────────── ОЗВУЧКА ──────────────────────────
+
+def tts_block(text, out_mp3: Path, voice_id, api_key, stability=0.42,
+              similarity=0.78, style=0.10):
+    """
+    Один блок текста → mp3 + выравнивание по символам.
+    Настройки голоса чуть плавают от ролика к ролику — иначе интонация
+    становится одинаковой на всём канале.
+    """
+    url = (f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+           f"/with-timestamps")
+    r = requests.post(url, timeout=TIMEOUT,
+                      headers={"xi-api-key": api_key,
+                               "Content-Type": "application/json"},
+                      json={"text": text,
+                            "model_id": "eleven_multilingual_v2",
+                            "voice_settings": {
+                                "stability": stability,
+                                "similarity_boost": similarity,
+                                "style": style,
+                                "use_speaker_boost": True}})
+    if r.status_code != 200:
+        # ElevenLabs пишет причину в тело ответа: истёкший ключ, исчерпанная
+        # квота, чужой voice_id, блокировка облачного IP на бесплатном тарифе.
+        # raise_for_status тело выбрасывает, и в логе остаётся голое
+        # «401 Unauthorized» без единой подсказки, что чинить.
+        msg = f"ElevenLabs {r.status_code}: {r.text[:500]}"
+        # Самая частая причина — не тот voice_id: он у каждого аккаунта свой,
+        # и чужой идентификатор из чужой спецификации не работает. Гадать по
+        # коду ответа не нужно, список голосов аккаунта отдаётся тем же ключом.
+        if "voice" in r.text.lower() or r.status_code in (400, 404):
+            msg += "\n" + available_voices(api_key)
+        raise RuntimeError(msg)
+    data = r.json()
+    import base64
+    out_mp3.write_bytes(base64.b64decode(data["audio_base64"]))
+    al = data.get("alignment") or data.get("normalized_alignment") or {}
+    return {
+        "chars": al.get("characters", []),
+        "starts": al.get("character_start_times_seconds", []),
+        "ends": al.get("character_end_times_seconds", []),
+    }
+
+
+def available_voices(api_key, limit=25):
+    """
+    Список голосов аккаунта — для сообщения об ошибке.
+
+    voice_id у каждого аккаунта свой: идентификатор, скопированный из чужой
+    спецификации или из статьи, не работает. Без этого списка отказ выглядит
+    как «422 Unprocessable Entity» и не подсказывает ничего.
+
+    Сама по себе никогда не роняет прогон: это диагностика, а не проверка.
+    """
+    try:
+        r = requests.get("https://api.elevenlabs.io/v1/voices", timeout=30,
+                         headers={"xi-api-key": api_key})
+        if r.status_code != 200:
+            return f"(список голосов получить не вышло: {r.status_code})"
+        rows = [f"  {v.get('voice_id')}  {v.get('name')}"
+                for v in r.json().get("voices", [])[:limit]]
+        if not rows:
+            return "(в аккаунте нет ни одного голоса)"
+        return ("Голоса этого аккаунта — впиши нужный в поле voice_id "
+                "спецификации:\n" + "\n".join(rows))
+    except Exception as e:
+        return f"(список голосов получить не вышло: {e})"
+
+
+def sentence_marks(text, align, offset):
+    """
+    Превращает посимвольные тайм-коды в границы предложений.
+    Это и есть точки, где робот будет менять кадр.
+    """
+    chars, starts, ends = align["chars"], align["starts"], align["ends"]
+    if not chars:
+        return []
+    marks, buf, buf_start = [], [], None
+    for i, ch in enumerate(chars):
+        if buf_start is None:
+            buf_start = starts[i]
+        buf.append(ch)
+        if ch in ".!?" and i + 1 < len(chars) and chars[i + 1] in " \n":
+            marks.append({"text": "".join(buf).strip(),
+                          "start": round(buf_start + offset, 3),
+                          "end": round(ends[i] + offset, 3)})
+            buf, buf_start = [], None
+    if buf:
+        marks.append({"text": "".join(buf).strip(),
+                      "start": round((buf_start or 0) + offset, 3),
+                      "end": round(ends[-1] + offset, 3)})
+    return marks
+
+
+def build_voice(job, work: Path):
+    # strip обязателен: при вставке в Settings к значению легко цепляется
+    # перенос строки или пробел, и API отвечает 401 без объяснений
+    key = os.environ["ELEVENLABS_API_KEY"].strip()
+    # Голос принадлежит КАНАЛУ, а не репозиторию. Читается из спецификации
+    # ролика; секрет остаётся запасным путём, чтобы старые спецификации без
+    # поля voice_id продолжали работать.
+    voice = (job.get("voice_id")
+             or os.environ.get("ELEVENLABS_VOICE_ID", "")).strip()
+    if not voice:
+        raise SystemExit(
+            "не задан голос: поле voice_id в спецификации ролика "
+            "или секрет ELEVENLABS_VOICE_ID")
+    vs = job.get("voice_settings", {})
+    adir = work / "voice"
+    adir.mkdir(parents=True, exist_ok=True)
+
+    parts, marks, offset = [], [], 0.0
+    for i, block in enumerate(job["script_blocks"], 1):
+        mp3 = adir / f"block_{i:02d}.mp3"
+        # тайм-коды нужны наравне с mp3: если из кэша приехал только звук,
+        # блок переозвучивается, иначе ниже падение на чтении json
+        if mp3.exists() and (adir / f"block_{i:02d}.json").exists():
+            log(f"  блок {i} уже озвучен, пропускаю")
+        else:
+            log(f"  озвучиваю блок {i} ({len(block)} символов)")
+            al = tts_block(block, mp3, voice, key,
+                           vs.get("stability", 0.42),
+                           vs.get("similarity", 0.78),
+                           vs.get("style", 0.10))
+            (adir / f"block_{i:02d}.json").write_text(json.dumps(al))
+        al = json.loads((adir / f"block_{i:02d}.json").read_text())
+        marks += sentence_marks(block, al, offset)
+        dur = _duration(mp3)
+        offset += dur
+        parts.append(mp3)
+
+    # склейка блоков в одну дорожку
+    full = work / "voice_full.m4a"
+    lst = adir / "list.txt"
+    lst.write_text("".join(f"file '{p.resolve()}'\n" for p in parts))
+    # было os.system с заглушенным выводом: ошибка склейки терялась, дорожки
+    # не появлялось, и падал уже монтаж — на другом шаге и без причины
+    import subprocess
+    subprocess.run(f'ffmpeg -y -f concat -safe 0 -i "{lst}" -c:a aac -b:a 192k '
+                   f'"{full}"', shell=True, check=True,
+                   stdout=subprocess.DEVNULL)
+    (work / "marks.json").write_text(json.dumps(marks, indent=1))
+    log(f"  озвучка готова: {offset:.1f} сек, {len(marks)} предложений")
+    return full, marks, offset
+
+
+def _duration(p: Path):
+    import subprocess
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                        "format=duration", "-of", "csv=p=0", str(p)],
+                       capture_output=True, text=True)
+    return float(r.stdout.strip() or 0)
+
+
+# ────────────────────────── ИЗОБРАЖЕНИЯ ──────────────────────────
+
+XAI = "https://api.x.ai/v1"
+
+
+def images_sync(prompts, out: Path, model, key):
+    """Быстрый режим: по одному запросу, полная цена, готово за минуты."""
+    out.mkdir(parents=True, exist_ok=True)
+    for i, p in enumerate(prompts, 1):
+        dst = out / f"img_{i:03d}.jpg"
+        if dst.exists():
+            continue
+        r = requests.post(f"{XAI}/images/generations", timeout=180,
+                          headers={"Authorization": f"Bearer {key}",
+                                   "Content-Type": "application/json"},
+                          json={"model": model, "prompt": p, "n": 1})
+        if r.status_code != 200:
+            log(f"  ! картинка {i} не вышла: {r.status_code} {r.text[:160]}")
+            continue
+        url = r.json()["data"][0]["url"]
+        dst.write_bytes(requests.get(url, timeout=120).content)
+        log(f"  картинка {i}/{len(prompts)}")
+
+
+def images_batch(prompts, out: Path, model, key, poll=120):
+    """
+    Дешёвый режим: пакет заданий, минус 50% от цены, до суток ожидания.
+    Ссылки на готовые файлы живут около часа, поэтому качаем сразу
+    как только пакет закрылся.
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    state = out / "_batch.json"
+
+    if not state.exists():
+        lines = [json.dumps({
+            "custom_id": f"img_{i:03d}",
+            "method": "POST",
+            "url": "/v1/images/generations",
+            "body": {"model": model, "prompt": p, "n": 1},
+        }) for i, p in enumerate(prompts, 1)]
+        jsonl = out / "requests.jsonl"
+        jsonl.write_text("\n".join(lines))
+
+        up = requests.post(f"{XAI}/files", timeout=TIMEOUT,
+                           headers={"Authorization": f"Bearer {key}"},
+                           files={"file": open(jsonl, "rb")})
+        up.raise_for_status()
+        fid = up.json()["id"]
+
+        b = requests.post(f"{XAI}/batches", timeout=TIMEOUT,
+                          headers={"Authorization": f"Bearer {key}",
+                                   "Content-Type": "application/json"},
+                          json={"name": out.parent.name,
+                                "input_file_id": fid})
+        b.raise_for_status()
+        state.write_text(json.dumps(b.json()))
+        log(f"  пакет отправлен: {b.json().get('batch_id')}")
+
+    bid = json.loads(state.read_text()).get("batch_id")
+
+    while True:
+        s = requests.get(f"{XAI}/batches/{bid}", timeout=TIMEOUT,
+                         headers={"Authorization": f"Bearer {key}"}).json()
+        pending = s.get("state", {}).get("num_pending", 0)
+        if pending == 0:
+            break
+        log(f"  в очереди {pending}, жду {poll} сек")
+        time.sleep(poll)
+
+    ofid = s.get("output_file_id")
+    body = requests.get(f"{XAI}/files/{ofid}/content", timeout=TIMEOUT,
+                        headers={"Authorization": f"Bearer {key}"}).text
+    n = 0
+    for line in body.splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        cid = rec.get("custom_id", "")
+        try:
+            url = rec["response"]["body"]["data"][0]["url"]
+        except Exception:
+            log(f"  ! {cid} без результата")
+            continue
+        (out / f"{cid}.jpg").write_bytes(
+            requests.get(url, timeout=120).content)
+        n += 1
+    log(f"  скачано {n} картинок")
+
+
+# ────────────────────────── АРХИВЫ ──────────────────────────
+# Ключ нужен только Smithsonian. Остальные пять открыты.
+
+def src_pexels(q, n):
+    k = (os.environ.get("PEXELS_API_KEY") or "").strip()
+    if not k:
+        return []
+    r = requests.get("https://api.pexels.com/videos/search", timeout=TIMEOUT,
+                     headers={"Authorization": k},
+                     params={"query": q, "per_page": n, "orientation": "landscape"})
+    out = []
+    for v in r.json().get("videos", []):
+        files = [f for f in v["video_files"]
+                 if f.get("width", 0) >= 1280 and f.get("link")]
+        if files:
+            best = sorted(files, key=lambda f: abs(f["width"] - 1920))[0]
+            out.append({"url": best["link"], "src": "pexels",
+                        "dur": v.get("duration", 0), "kind": "video"})
+    return out
+
+
+def src_pixabay(q, n):
+    k = (os.environ.get("PIXABAY_API_KEY") or "").strip()
+    if not k:
+        return []
+    r = requests.get("https://pixabay.com/api/videos/", timeout=TIMEOUT,
+                     params={"key": k, "q": q, "per_page": max(n, 3)})
+    out = []
+    for v in r.json().get("hits", []):
+        vv = v.get("videos", {})
+        link = (vv.get("large") or vv.get("medium") or {}).get("url")
+        if link:
+            out.append({"url": link, "src": "pixabay",
+                        "dur": v.get("duration", 0), "kind": "video"})
+    return out
+
+
+def src_nasa(q, n, media="image"):
+    """Ключ не нужен. Общественное достояние."""
+    r = requests.get("https://images-api.nasa.gov/search", timeout=TIMEOUT,
+                     headers=UA, params={"q": q, "media_type": media})
+    out = []
+    for it in r.json().get("collection", {}).get("items", [])[:n * 3]:
+        links = it.get("links") or []
+        if not links:
+            continue
+        href = links[0].get("href")
+        if href:
+            out.append({"url": href, "src": "nasa",
+                        "kind": "image" if media == "image" else "video"})
+        if len(out) >= n:
+            break
+    return out
+
+
+def src_archive_org(q, n):
+    """Хроника. Фильтр по лицензии: только явное общественное достояние."""
+    r = requests.get("https://archive.org/advancedsearch.php", timeout=TIMEOUT,
+                     headers=UA,
+                     params={"q": f'{q} AND mediatype:(movies) AND '
+                                  f'licenseurl:(*publicdomain*)',
+                             "fl[]": "identifier", "rows": n * 2,
+                             "output": "json"})
+    out = []
+    # не больше четырёх обращений за метаданными и по 25 секунд на каждое:
+    # это самый медленный источник, и на нём легко просидеть минуты
+    for d in r.json().get("response", {}).get("docs", [])[:4]:
+        ident = d["identifier"]
+        meta = requests.get(f"https://archive.org/metadata/{ident}",
+                            timeout=25, headers=UA).json()
+        # Берём САМЫЙ ЛЁГКИЙ подходящий файл, а не первый попавшийся.
+        # В хронике рядом с обзорной нарезкой лежит полнометражная версия
+        # на несколько гигабайт, и первым в списке оказывается как повезёт.
+        # Один такой файл вешал этап 1 на десятки минут.
+        vids = [f for f in meta.get("files", [])
+                if f.get("name", "").lower().endswith((".mp4", ".m4v"))]
+
+        def size_of(f):
+            try:
+                return int(f.get("size") or 0) or MAX_FILE_BYTES * 10
+            except (TypeError, ValueError):
+                return MAX_FILE_BYTES * 10
+
+        vids = [f for f in sorted(vids, key=size_of) if size_of(f) <= MAX_FILE_BYTES]
+        if vids:
+            out.append({
+                "url": f"https://archive.org/download/{ident}/{vids[0]['name']}",
+                "src": "archive.org", "kind": "video"})
+        if len(out) >= n:
+            break
+    return out
+
+
+def src_met(q, n):
+    """Met Museum. Ключ не нужен, только объекты в открытом доступе."""
+    r = requests.get("https://collectionapi.metmuseum.org/public/collection/"
+                     "v1/search", timeout=TIMEOUT, headers=UA,
+                     params={"q": q, "hasImages": "true", "isPublicDomain": "true"})
+    out = []
+    for oid in (r.json().get("objectIDs") or [])[:n * 2]:
+        o = requests.get("https://collectionapi.metmuseum.org/public/"
+                         f"collection/v1/objects/{oid}",
+                         timeout=TIMEOUT, headers=UA).json()
+        img = o.get("primaryImage")
+        if img and o.get("isPublicDomain"):
+            out.append({"url": img, "src": "met", "kind": "image"})
+        if len(out) >= n:
+            break
+    return out
+
+
+def src_loc(q, n):
+    """Библиотека Конгресса. Ключ не нужен."""
+    r = requests.get("https://www.loc.gov/photos/", timeout=TIMEOUT, headers=UA,
+                     params={"q": q, "fo": "json", "c": n * 2})
+    out = []
+    for it in r.json().get("results", [])[:n * 2]:
+        imgs = it.get("image_url") or []
+        if imgs:
+            out.append({"url": imgs[-1], "src": "loc", "kind": "image"})
+        if len(out) >= n:
+            break
+    return out
+
+
+def src_wikimedia(q, n):
+    """Commons. Ключ не нужен, но User-Agent обязателен."""
+    r = requests.get("https://commons.wikimedia.org/w/api.php", timeout=TIMEOUT,
+                     headers=UA,
+                     params={"action": "query", "generator": "search",
+                             "gsrsearch": f"{q} filetype:bitmap",
+                             "gsrlimit": n * 2, "prop": "imageinfo",
+                             "iiprop": "url|extmetadata", "iiurlwidth": 1920,
+                             "format": "json"})
+    out = []
+    for page in (r.json().get("query", {}).get("pages", {}) or {}).values():
+        ii = (page.get("imageinfo") or [{}])[0]
+        lic = ((ii.get("extmetadata") or {}).get("LicenseShortName", {})
+               .get("value", "")).lower()
+        if not any(t in lic for t in ("public domain", "cc0", "pd-")):
+            continue          # атрибуцию не берём принципиально
+        url = ii.get("thumburl") or ii.get("url")
+        if url:
+            out.append({"url": url, "src": "wikimedia", "kind": "image"})
+        if len(out) >= n:
+            break
+    return out
+
+
+VIDEO_SOURCES = [src_pexels, src_pixabay, src_archive_org]
+PHOTO_SOURCES = [src_nasa, src_met, src_loc, src_wikimedia]
+
+
+def fetch(url, dst: Path, limit=MAX_FILE_BYTES, seconds=FETCH_SECONDS):
+    """
+    Качает файл потоком, с потолком и по размеру, и по времени.
+
+    Скачивать через .content нельзя: файл целиком уезжает в память, а
+    оборвать раздувшуюся загрузку нечем. Здесь и то, и другое под контролем,
+    а недокачанный файл удаляется — обрезанное видео дальше по конвейеру
+    хуже, чем его отсутствие.
+    """
+    stop = time.time() + seconds
+    try:
+        r = requests.get(url, headers=UA, stream=True, timeout=(15, 30))
+        if r.status_code != 200:
+            return False
+        size = int(r.headers.get("Content-Length") or 0)
+        if size > limit:
+            log(f"  ! пропускаю, {size // 1048576} МБ — тяжелее потолка")
+            return False
+        n = 0
+        with open(dst, "wb") as f:
+            for chunk in r.iter_content(1 << 16):
+                n += len(chunk)
+                if n > limit or time.time() > stop:
+                    raise TimeoutError(
+                        f"{n // 1048576} МБ / {seconds} с — не уложился")
+                f.write(chunk)
+        if n < 20000:                     # заглушка вместо файла
+            dst.unlink(missing_ok=True)
+            return False
+        return True
+    except Exception as e:
+        dst.unlink(missing_ok=True)
+        log(f"  ! скачать не вышло: {e}")
+        return False
+
+
+def gather(queries, per_query, sources, out: Path, kind, budget=GATHER_BUDGET):
+    """
+    Обходит источники и качает материал, укладываясь в отведённое время.
+
+    Бюджет обязателен. Раньше его не было, и один медленный файл с
+    archive.org держал этап 1 больше получаса: requests.timeout ограничивает
+    паузу МЕЖДУ байтами, а не всю загрузку, поэтому сервер, отдающий данные
+    тонкой струйкой, не срабатывает по таймауту никогда.
+
+    Материала всегда больше, чем нужно ролику, так что оборваться на
+    середине списка не страшно — важно не встать намертво.
+
+    ДОБОР. Функция запускается повторно, чтобы дозакачать материал по
+    исправленным запросам, поэтому нумерация продолжается с того места, где
+    кончилась, а не начинается с нуля. Иначе второй заход переписал бы
+    clip_000 другим содержимым — и номера, которые человек отметил на листе
+    отбора, стали бы указывать на другие файлы. Уже скачанные ссылки
+    пропускаются: платить временем за то же самое незачем.
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    deadline = time.time() + budget
+
+    old = []
+    man = out / "_manifest.json"
+    if man.exists():
+        try:
+            old = json.loads(man.read_text())
+        except json.JSONDecodeError:
+            old = []
+    seen = {o.get("url") for o in old if o.get("url")}
+    # следующий номер берём с диска, а не из манифеста: файл мог быть
+    # положен руками или манифест мог потеряться вместе с кэшем
+    have = [int(p.name.split("_")[1]) for p in out.glob(f"{kind}_*")
+            if p.name.split("_")[1].isdigit()]
+    n = max(have) + 1 if have else 0
+    if old or have:
+        log(f"  уже есть {len(have)} шт, продолжаю с номера {n:03d}")
+
+    got = []
+    for q in queries:
+        for fn in sources:
+            if time.time() > deadline:
+                break
+            try:
+                items = fn(q, per_query)
+            except Exception as e:
+                log(f"  ! {fn.__name__} на «{q}»: {e}")
+                continue
+            for it in items:
+                if it["url"] in seen:
+                    continue
+                seen.add(it["url"])
+                if time.time() > deadline:
+                    log(f"  … время на «{kind}» вышло, беру что успел")
+                    break
+                ext = ".mp4" if it["kind"] == "video" else ".jpg"
+                dst = out / f"{kind}_{n:03d}_{it['src']}{ext}"
+                if fetch(it["url"], dst):
+                    got.append({"file": str(dst), **it})
+                    log(f"  {kind} {n:03d}: {it['src']}  «{q}»")
+                    n += 1
+            if time.time() > deadline:
+                break
+        if time.time() > deadline:
+            break
+    man.write_text(json.dumps(old + got, indent=1))
+    log(f"  {kind}: добавлено {len(got)}, всего {len(old) + len(got)}")
+    return got
+
+
+# ────────────────────────── ПРОВЕРКА КЛЮЧЕЙ ──────────────────────────
+
+# Ключ есть и он настоящий, просто выдан с урезанными правами.
+# Проверяется ПЕРВЫМ: в таком ответе есть и слово authentication, и 401.
+SCOPE_HINTS = ("missing_permissions", "missing the permission")
+
+# Недвусмысленный отказ именно по ключу. Список намеренно узкий: всё, что
+# сюда не попало, считается непонятным ответом и лишь печатается.
+DENY_HINTS = ("invalid_api_key", "invalid api key", "incorrect api key",
+              "invalid authentication", "no api key", "api key not found")
+
+
+def check_keys():
+    """
+    Дёргает по одному дешёвому запросу на каждый ключ ДО того, как начнётся
+    озвучка и генерация. Иначе неверный ключ вылезает на первом же обращении,
+    и каждый следующий ключ проверяется отдельным прогоном по четверти часа.
+
+    Все пять запросов бесплатные и ничего не создают. Значения ключей никуда
+    не печатаются — только вердикт и текст ответа сервиса.
+    """
+    el = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    voice = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()  # необязателен
+    xai = os.environ.get("XAI_API_KEY", "").strip()
+    pex = os.environ.get("PEXELS_API_KEY", "").strip()
+    pix = os.environ.get("PIXABAY_API_KEY", "").strip()
+
+    bad = []
+
+    def probe(name, url, headers=None, params=None):
+        """Возвращает True, если сервис принял ключ."""
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=30)
+        except Exception as e:
+            log(f"  ? {name}: сеть недоступна ({e}) — проверить не удалось")
+            return None
+        if r.status_code == 200:
+            log(f"  + {name}: принят")
+            return True
+
+        low = r.text.lower()
+
+        # Урезанные права — НЕ повод останавливать сборку. Ключ ElevenLabs
+        # можно выдать без user_read или voices_read, и он при этом отлично
+        # озвучивает. Ровно на этом проверка один раз остановила прогон,
+        # который до неё собирал ролик без единой жалобы.
+        if any(h in low for h in SCOPE_HINTS):
+            log(f"  + {name}: принят (права ключа урезаны, для работы хватает)")
+            return True
+
+        # По коду судить нельзя: xAI на неверный ключ отвечает 400
+        # («Incorrect API key provided»), а не 401. Смотрим, что сервис
+        # сказал про сам ключ. Тело печатаем ВСЕГДА: без него код ответа
+        # ничего не объясняет.
+        if any(h in low for h in DENY_HINTS):
+            log(f"  ! {name}: ОТКАЗ {r.status_code} — {r.text[:220]}")
+            bad.append(name)
+            return False
+
+        # Всё остальное — только предупреждение. Проверка не должна
+        # останавливать работающий пайплайн из-за ответа, которого не поняла.
+        log(f"  ? {name}: ответ {r.status_code}, разбираться не берусь — "
+            f"{r.text[:200]}")
+        return None
+
+    el_ok = probe("ELEVENLABS_API_KEY", "https://api.elevenlabs.io/v1/user",
+                  {"xi-api-key": el})
+    # voice_id проверяется тем же ключом. Если ключ не принят, проверка голоса
+    # вернёт тот же 401 и обвинит исправный voice_id — поэтому пропускаем.
+    #
+    # Пустой голос здесь не ошибка: штатно он задаётся полем voice_id в
+    # спецификации ролика, а секрет остался запасным путём. Опрашивать
+    # /v1/voices/ с пустым идентификатором нельзя — ответ на такой запрос
+    # ничего не говорит о ключе, а в лог уйдёт ложная жалоба.
+    if not voice:
+        log("  . ELEVENLABS_VOICE_ID: не задан, голос берётся из спецификации")
+    elif el_ok:
+        probe("ELEVENLABS_VOICE_ID",
+              f"https://api.elevenlabs.io/v1/voices/{voice}", {"xi-api-key": el})
+    else:
+        log("  . ELEVENLABS_VOICE_ID: не проверен, сначала нужен рабочий ключ")
+
+    probe("XAI_API_KEY", "https://api.x.ai/v1/models",
+          {"Authorization": f"Bearer {xai}"})
+    probe("PEXELS_API_KEY", "https://api.pexels.com/v1/search",
+          {"Authorization": pex}, {"query": "test", "per_page": 1})
+    probe("PIXABAY_API_KEY", "https://pixabay.com/api/",
+          None, {"key": pix, "q": "test", "per_page": 3})
+
+    if bad:
+        raise SystemExit(
+            "Сервисы не приняли ключи: " + ", ".join(bad) + ".\n"
+            "Значения лежат в Settings -> Secrets and variables -> Actions.\n"
+            "Чаще всего это устаревший ключ или значения, перепутанные местами\n"
+            "между секретами. Ключ ElevenLabs начинается с sk_, voice_id — это\n"
+            "короткий идентификатор голоса из Voice Library, а не ключ.")
+
+
+# ────────────────────────── ГЛАВНОЕ ──────────────────────────
+
+def fetch_material(job, work: Path):
+    """
+    Только футаж и архивные фото. Ни озвучки, ни генерации — денег не тратит.
+
+    Вынесено отдельно, потому что материал приходится добирать: запросы
+    правятся после того, как посмотришь, что по ним нашлось, и гонять ради
+    этого заново озвучку за деньги незачем.
+    """
+    log("── футажи")
+    gather(job["footage_queries"], 3, VIDEO_SOURCES, work / "footage", "clip")
+    log("── реальные фото из архивов")
+    gather(job["archive_queries"], 4, PHOTO_SOURCES, work / "archive", "arch")
+
+
+def main(job_path, stage="all"):
+    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    work = Path("work") / job["id"] / "assets"
+    work.mkdir(parents=True, exist_ok=True)
+
+    # Добор материала: озвучка и картинки уже есть, трогать их нельзя.
+    if stage == "material":
+        fetch_material(job, work)
+        log("── материал добран, озвучка и картинки не тронуты")
+        return
+
+    log("── проверка ключей")
+    check_keys()
+
+    log("── озвучка")
+    voice, marks, total = build_voice(job, work)
+
+    log("── изображения")
+    key = os.environ["XAI_API_KEY"].strip()
+    model = job.get("image_model", "grok-imagine-image")
+    prompts = job["image_prompts"]
+    if job.get("batch", True):
+        images_batch(prompts, work / "images", model, key)
+    else:
+        images_sync(prompts, work / "images", model, key)
+
+    fetch_material(job, work)
+
+    (work / "state.json").write_text(json.dumps(
+        {"total_audio": total, "marks": len(marks)}, indent=1))
+    log(f"── готово. Звук {total/60:.1f} мин")
+
+
+if __name__ == "__main__":
+    # второй аргумент: material — добрать только футаж и архив,
+    # без озвучки и генерации
+    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "all")
