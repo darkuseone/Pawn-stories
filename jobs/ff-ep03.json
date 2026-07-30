@@ -1,0 +1,275 @@
+{
+  "_": "Эпизод Forgotten Fortunes, конвертирован из присланного манифеста forgotten-fortunes-ep03.json под этот конвейер. Текст, промпты, заголовки, описание, теги и политика источников взяты оттуда без правок по смыслу. Изменено только то, что не собралось бы: см. поле _расхождения.",
+  "id": "ff-ep03",
+  "_расхождения": [
+    "Присланный render-episode.yml НЕ используется. Он строит слайдшоу через zoompan — замерено 31 секунда процессорного времени на секунду видео, на 23 минуты это больше 12 часов при лимите GitHub Actions в 6. Здесь наезды делаются через scale+crop: 2.6 с на секунду.",
+    "Сумма hold_seconds у двадцати картинок = 166 секунд против 23 минут начитки. В присланном workflow -shortest обрезал бы звук до 2:46 молча. Здесь длительность каждого кадра считается от границ предложений в тайм-кодах озвучки, поэтому картинка идёт ровно столько, сколько идёт звук.",
+    "Поля motion и hold_seconds у картинок не переносятся: движение камеры и длительность назначает движок стиля от позиции на таймлайне и от пауз в речи. Смысл тот же — медленный наезд, отъезд, панорама.",
+    "Теги урезаны с 597 символов до лимита YouTube в 500. Убран тег с именем частного лица (terry herbert...): наводить поиск на живого человека по имени не стоит, событие ищется и без этого.",
+    "Главы переписаны под границы сегментов: конвейер вычисляет тайм-коды из реальной озвучки, а в манифесте они были проставлены руками и не совпадали с началами сегментов.",
+    "Добавлены footage_queries и archive_queries: в манифесте их нет, он рассчитан на слайдшоу из одной генерации. Здесь 30% времени генерация, остальное реальный сток и архив."
+  ],
+  "topic": {
+    "slug": "viral-historical-finds-that-made-ordinary-people-rich",
+    "keywords": [
+      "saddle ridge hoard",
+      "gold coins in cans",
+      "staffordshire hoard",
+      "metal detector",
+      "anglo saxon gold",
+      "qianlong vase",
+      "pinner ruislip auction",
+      "treasure valuation committee",
+      "house clearance",
+      "record never paid"
+    ]
+  },
+  "_голос": "Голос из секрета ELEVENLABS_VOICE_ID. voice_settings перенесены из манифеста как есть.",
+  "voice_settings": {
+    "stability": 0.45,
+    "similarity": 0.75,
+    "style": 0.35
+  },
+  "music": "assets/music/bed.mp3",
+  "bed_gain_db": -27.0,
+  "_цветокор": "copper_dusk — самый насыщенный из тёплой семьи, под золото и медь. Архивный archive_silver: у pawn-01 был sepia, повторять нельзя.",
+  "lut": "copper_dusk",
+  "archive_lut": "archive_silver",
+  "batch": false,
+  "material_overshoot": 1.4,
+  "fill_limit": 30,
+  "vet_vision": true,
+  "photo_sources": [
+    "met",
+    "loc",
+    "wikimedia"
+  ],
+  "video_sources": [
+    "pexels",
+    "pixabay",
+    "archive_org"
+  ],
+  "script_blocks": [
+    "The hammer came down so hard that it broke.\n\nNot chipped. Broke. The head snapped clean off the handle, and the auctioneer, a heavy man in his sixties in a tweed jacket, was left standing in a converted warehouse in a west London suburb, holding a stick.\n\nFour seconds earlier, the number on the board had read forty-three million pounds.\n\nFor a vase. Sixteen inches tall. That morning it had been sitting on a shelf between a rocking horse and a grandfather clock.\n\nThree objects. Three completely ordinary people. A couple walking their dog. An unemployed man with a second-hand metal detector. A retired solicitor emptying out a dead relative's bungalow.\n\nBetween them, in the space of four years, they pulled close to seventy million dollars out of the dirt, out of a ploughed field, and off a dusty shelf. And every single one of them came within inches of walking straight past it.\n\nHere is the part these stories usually leave out.\n\nThe finding is the easy bit. Bending down takes a second. What comes afterwards takes years. Valuation committees. Lawyers. Silence. Aeroplanes to countries you have never been to, chasing money that might not exist.\n\nTwo of these three people paid for their fortune with something they never got back. A friendship. A name. A life they were allowed to talk about out loud.\n\nAnd that number I just gave you... the forty-three million that broke the gavel... was never paid. Not one penny of it.\n\nI will come back to that. What happened instead is stranger than the auction.\n\nStart in California.\n\nEarly in two thousand and thirteen, in the dry gold country of Northern California, a husband and wife took the same walk they had taken for years. Same path. Same hillside. Same dog.\n\nThey were in their forties, self-employed, and they had lived on that rural property for several years. To this day, almost nobody knows their names. In every news story, in every catalogue, they are called John and Mary. Those are not their real names.\n\nIt had rained. The bank beside the path had eroded slightly, and something was poking up out of the mud. A can. Old, rusted, dented. The kind of thing you kick aside a hundred times without a second thought.\n\nShe bent down anyway.\n\nThe coin dealer who later handled the find repeated what she told him about that moment. Don't be above bending over to check on a rusty can.\n\nIt didn't move. It was far heavier than a can that size has any business being. Gold is dense. A tin packed tight with double eagles weighs roughly what a bowling ball weighs.\n\nThey carried it back to the house and opened it on the kitchen counter. Inside, stacked on edge, packed so tightly they had to be prised apart, were gold coins.\n\nThen they went back outside with a shovel.\n\nOver the following days they dug up eight cans in total, at different depths, near the roots of an old tree on a path they had walked hundreds of times. Between them, those cans held one thousand four hundred and twenty-seven gold coins, minted between eighteen forty-seven and eighteen ninety-four.\n\nThe face value, the number actually stamped into the metal, came to twenty-seven thousand, nine hundred and eighty dollars.\n\nThat was not what they were worth.\n\nFor months, the couple told nobody. Not friends, not neighbours. They put the coins into an old ice chest, buried the ice chest under a woodpile in their own yard, and went to bed every night about thirty feet away from roughly ten million dollars.\n\nEventually they drove the coins, in plastic bags, to a numismatic firm in Tiburon called Kagin's. The senior numismatist there, David McCarthy, later described picking the first one out of a bag. An eighteen ninety double eagle, filthy, crusted with rust and clay. He turned it to the light, and through the tiny patch of exposed metal he could see that the coin underneath was essentially perfect.",
+    "That is the detail that changes everything. These coins had been buried in cans for well over a century, and most of them had never circulated. They came out of the ground looking like they had come out of the mint.\n\nThe breakdown: one thousand three hundred and seventy-three twenty-dollar Liberty double eagles, fifty ten-dollar eagles, and four five-dollar half eagles. Most were struck at the San Francisco mint. More than a dozen of them were graded as the finest examples of their date and mint that anyone has ever certified.\n\nOne coin, an eighteen sixty-six San Francisco double eagle without the motto, was valued on its own at close to one million dollars.\n\nThe whole hoard was put at ten million dollars and up. The largest buried cache of gold coins ever recovered in the United States.\n\nAnd then the internet went to work.\n\nWithin days there were theories. The gold belonged to Jesse James. The gold belonged to the stagecoach robber Black Bart. Best of all, the gold was stolen, lifted from the San Francisco mint in a famous embezzlement at the turn of the century, which would mean the couple owned nothing at all and would have to hand every coin back.\n\nNewspapers ran it. Serious newspapers. For a few weeks, the biggest treasure find in American history looked like it might evaporate in a courtroom.\n\nIt didn't. The dates were wrong. A mint theft would have produced uncirculated coins of one or two recent years, all with the same mint mark. This hoard was mixed, spanning nearly fifty years, and plenty of the coins had clearly been in someone's pocket. The United States Mint issued a plain statement of its own. It had no information linking the Saddle Ridge coins to any theft at any mint facility.\n\nSo the couple kept them.\n\nThe sale opened at midnight on the twenty-seventh of May, two thousand and fourteen, on Amazon and on the dealer's own website. Not an auction. A shopping cart. Over a million dollars of gold sold in the first couple of hours. In the first twenty-four hours, Amazon moved three hundred and forty-six coins for just under one point four million dollars, and the dealer sold two hundred and twenty-five more for over two point four million.\n\nBuyers came from France, Germany, Japan, Britain, Canada, Brazil, Hong Kong.\n\nThe couple paid off their debts. They gave money to local charities. They kept a small handful of coins for themselves and let the rest go.\n\nAnd here is what they gave up.\n\nThey can never be named. Not now, not in twenty years. The moment they are, the property becomes a target, and every stranger with a family story about a great-grandfather in the gold fields has a reason to knock on their door. Several people came forward claiming the gold had belonged to their ancestors. None of them got anywhere.\n\nSo the single most extraordinary thing that will ever happen to these two people is a thing they have to pretend never happened. No interviews. No photographs. Just a rusty can in a museum case somewhere, and a name that isn't theirs.\n\nThere is one more loss in this story, and it is not theirs.\n\nSomebody buried that gold. Somebody put away one thousand four hundred and twenty-seven coins, in eight separate cans, over what looks like decades. Coin by coin by coin. That person walked away from a fortune and never came back for it. Never told anyone where it was, or told one person who didn't listen.\n\nNobody knows who they were. Nobody ever will.\n\nIn California, the ground gave up a fortune and nobody could prove whose it was.\n\nFive thousand miles away, a man had the opposite problem. Everyone knew exactly what he had found, exactly who it belonged to, and exactly what it was worth, down to the pound.\n\nThat was the problem.\n\nThe fifth of July, two thousand and nine. Terry Herbert, fifty-five years old, from Burntwood in Staffordshire, England. Unemployed. Living on disability benefit in a council flat.\n\nHe had been metal detecting for about eighteen years. Eighteen years of ring pulls, bottle caps, Victorian pennies and horseshoes. His detector was second-hand, picked up at a car boot sale, reportedly for two pounds fifty.",
+    "That morning he drove a few minutes down the road to a field near the village of Hammerwich, pronounced hammer-witch, just outside Lichfield. The field belonged to a farmer he knew, Fred Johnson, sixty-eight years old, who had given him permission to search. It had just been ploughed.\n\nWithin about half an hour, the detector screamed.\n\nHe dug. Gold. Not a coin, not a ring. A piece of ornament, twisted, unmistakably old.\n\nHe moved a metre, and it screamed again.\n\nFor five days he went back to that field, and for five days the gold kept coming out of the soil. He filled bag after bag. Two hundred and forty-four of them.\n\nHe said afterwards that it was like being at home while somebody keeps putting money through your letterbox. He told a newspaper it was more fun than winning the lottery. He also said that when he closed his eyes at night, he was still seeing gold.\n\nTo his enormous credit, he stopped. He could have kept digging in silence. Instead he called the local finds liaison officer and handed the field over to archaeologists.\n\nWhat came out of the ground over the following months rewrote a century of scholarship.\n\nAround four thousand objects. Roughly five kilograms of gold. Another one and a half kilos of silver. Three and a half thousand cut garnets, some of them from as far away as India or Sri Lanka. Seventh century. The kingdom of Mercia, pronounced mur-sha, in the age of warrior kings.\n\nThe largest hoard of Anglo-Saxon gold and silver ever found. Anywhere. Ever.\n\nAnd it was strange gold. Almost every piece was war gear. Eighty-four sword pommel caps. Seventy-one hilt collars. Helmet fragments. Almost no jewellery, almost nothing a woman would have worn, and, tellingly, not a single blade.\n\nSomebody had taken swords, hundreds of them, and stripped the gold off the handles. Then put the gold in a bag, and put the bag in the ground.\n\nThere was a cross in there too. A large processional cross, folded roughly in half to make it fit.\n\nWhoever buried it had no reverence for any of it. It was loot. It was somebody else's defeat, packed away like scrap.\n\nAnd, exactly like California, they never came back for it.\n\nOn the twenty-fifth of November, two thousand and nine, an independent panel called the Treasure Valuation Committee met at the British Museum and put a number on it.\n\nThree million, two hundred and eighty-five thousand pounds.\n\nUnder British law, that money is split in half. Half to the finder. Half to the landowner. Two museums, in Birmingham and Stoke-on-Trent, launched a public appeal to raise it and keep the hoard in the region. Schoolchildren sent in coins. They got there.\n\nSo a man on disability benefit in a council flat received something in the region of one and a half million pounds. For eighteen years of nothing, followed by five days.\n\nFred Johnson, the farmer, got the same. Ten years later he told the BBC that he still lived on the farm, still mixed with the same people, and that the money had not changed him. He said people came up to him in town and shook his hand.\n\nBut the two men, the friend with the detector and the friend with the field, fell out.\n\nThat has been reported repeatedly and never seriously denied, and as far as anyone knows publicly, the rift was never repaired. Neither man has ever fully explained it. I am not going to invent a reason for you, because nobody outside that argument knows what it was.\n\nI will only say this. They had known each other before. One of them had been allowed onto the other's land as a favour. And then, between them, they were handed three and a quarter million pounds, and something in that arrangement broke.\n\nThere is a small, cold footnote.\n\nThree years later, in the winter of two thousand and twelve, Fred Johnson ploughed the field again, and more gold came up. Archaeologists had already gone over that ground with equipment used to find buried metal in war zones, and declared it empty. They were wrong. Ninety more pieces came out, including a helmet cheek-piece that fitted a fragment from the original find.\n\nTerry Herbert was not there. He had nothing to do with it. But under the law he was still the finder, so he was still entitled to half.\n\nThe field kept paying a man who was no longer speaking to the man who owned it.",
+    "Two finds. Two fortunes hauled out of the ground by people who got dirty doing it.\n\nThe third one is different. Nothing was buried. Nothing was hidden. The object sat in plain sight, in an ordinary living room in an ordinary suburb, for around eighty years.\n\nAnd it produced the biggest number in this video... which turned out to be a ghost.\n\nJanuary, two thousand and ten. Pinner, north-west London. A quiet street of semi-detached houses.\n\nA woman called Patricia Newman died there, aged seventy-three, in the house she had shared with her husband. She left no will. Under English law that made her intestate, which meant a court, rather than a family, decided who got everything.\n\nHer only surviving close relative was her sister, Gene Johnson, who was eighty-six years old. Gene's son, Tony Johnson, was fifty-five and a solicitor living on the Isle of Wight, so he handled the paperwork himself. Three months later a court in Winchester signed the estate over to his mother. On paper it came to about six hundred and fifty-eight thousand pounds, and almost all of that was the house.\n\nThen came the part every family knows. Emptying the place. Mahogany furniture, cupboards, a lifetime of ornaments, and somewhere among them, on a shelf, a Chinese vase.\n\nSixteen inches tall. Blue and yellow. Decorated with fish. It had been in the family since at least the nineteen thirties, and nobody living had any idea how it got there.\n\nThey found a leaflet from a local auction house, Bainbridge's, out in Ruislip. A small suburban firm that mostly handled probate clearances and sold things for a few hundred pounds. The leaflet was there because the owner had spent money on a mailshot across north-west London, hoping to bring in exactly this kind of job.\n\nOn the evening of the twenty-second of September, a porter lifted the vase onto a shelf reserved for ceramics. A consultant valuer named Luan Grocholski, pronounced gro-hol-ski, who had spent years cataloguing at Sotheby's, walked past it.\n\nHe stopped.\n\nThe vase was double-walled. An outer shell pierced like lace, and a second vase turning inside it. On the base was a Qianlong reign mark, pronounced chee-en-long, the emperor who ruled China through most of the seventeen hundreds. The enamelling was imperial workshop quality. The kind of object made at Jingdezhen, pronounced jing-duh-jen, for a palace, not a market.\n\nGrocholski went to libraries and looked for anything comparable. There was very little. There is nothing quite like it outside the Palace Museum in Beijing.\n\nThey put an estimate on it of eight hundred thousand to one point two million pounds. For a suburban saleroom, that was already the sale of a lifetime.\nThe eleventh of November, two thousand and ten. Lot eight hundred.\n\nThe room was packed. People were standing along the walls. Bidders had flown in. The bidding did not creep. It went through the estimate almost immediately, and then it kept going. Past five million. Past ten. Past twenty. Past thirty. Into a range that no piece of Chinese art had ever reached at auction anywhere in the world.\n\nForty-three million pounds.\n\nThe hammer broke.\n\nWith the buyer's premium and the tax on it, the total bill came to fifty-three million, one hundred and five thousand pounds. Around eighty-three million dollars. A world record for any Chinese work of art, set in a beige warehouse next to a car park, by an auctioneer whose usual lots go for under five hundred.\n\nThe family had walked in that morning hoping for a million. They walked out, on paper, among the wealthiest people in the country.\n\nOn paper.",
+    "The winning bid had been made by a man sitting in the front row, bidding on behalf of somebody else. His client's bill was forty-three million, plus a twenty percent buyer's premium on top. Eight point six million pounds in fees.\n\nThe money did not arrive.\n\nNot that week. Not that month. Weeks turned into months. The auctioneer and Tony Johnson eventually got on a plane to China to try to find the buyer and collect. They came home with nothing.\n\nRumours filled the gap. That the buyer was disputing the premium. That the buyer's business had turned. A name has circulated in the press for years, and it has never been confirmed, so I am not going to put it in your head as a fact.\n\nMeanwhile the family was trapped. The conditions of the original sale stopped them simply taking the vase to another auction house. Hold out for forty-three million and you might get nothing. Sell it again and the surprise is gone, everybody has seen it, and no one will ever bid like that twice.\n\nGene Johnson was eighty-six when the hammer fell. She spent the next two years waiting for money from a sale that had already been announced to the entire world.\n\nIn January two thousand and thirteen, it ended quietly. Bonhams brokered a private deal with a different buyer. The price was never disclosed. People with knowledge of the transaction put it somewhere between about twenty and twenty-five million pounds. The record books list it, cautiously, as at least twenty million.\n\nThe vase left the country.\n\nThe auction house's original bill was never met in full. They received an interim payment, and, by every account, a great deal of grief.\n\nSo think about what that number actually was.\n\nForty-three million pounds existed for about four seconds. As sound in a room, and ink on a board. It broke a gavel, it made headlines in forty countries, and it never became money. What became money was roughly half of it, two years later, in a private deal nobody was allowed to describe.\n\nAnd yet. A retired solicitor and his elderly mother emptied a dead woman's bungalow and came out of it with something in the region of twenty million pounds, for an ornament that had been sitting on a shelf being dusted for the better part of a century.\n\nPatricia Newman lived with that vase in her front room. She died without a will, aged seventy-three, in a semi-detached house in Pinner, and she never knew.\n\nThree stories. Look at what they have in common.\n\nIn every single one, the object outlasted everybody who owned it. Whoever filled those cans in California walked away and died. Whoever buried the Staffordshire gold walked away and died. Whoever carried that vase out of China in the eighteen hundreds put it on a shelf, and within two generations it was just an ornament nobody looked at.\n\nNone of these people were lucky, exactly. They were the ones who bothered to look.\n\nShe bent down for a rusty can that a hundred other people would have kicked. He kept swinging a two pound fifty detector through an empty field after eighteen years of finding nothing. He picked up a leaflet from a suburban auction house instead of calling a clearance firm to take the lot away for fifty quid.\n\nThat is the whole difference. Not luck. Attention.\n\nSo here is my question for you, and I actually want to read the answers.\n\nWhich of the three would you rather be? The couple who got ten million dollars and can never tell a single person? The man who got one and a half million and lost the friend who let him onto the land? Or the family who set a world record, and then waited two years to find out if it was real?\n\nTell me down below. I read them.\n\nAnd if you want more of these, there are plenty. The ground is full of them."
+  ],
+  "_картинки": "Двадцать промптов из манифеста, порядок сохранён. style_tail уже вшит в каждый промпт. Люди во всех промптах анонимные и вымышленные — это правило самого манифеста.",
+  "image_prompts": [
+    "Wide establishing shot of a dry golden hillside in Northern California at dawn, a narrow dirt footpath winding between scrub oaks, an anonymous middle-aged couple seen small and from behind walking a dog, early morning haze, long low sunlight raking across dead grass, wide angle, subject placed in the lower right third with large negative space of sky above, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Macro detail of a heavily rusted mid-19th-century metal can half buried in eroded reddish clay, corroded seams flaking, wet soil and pine needles around it, a faint dull gleam of metal visible through a split in the rust, overcast diffused daylight, extreme close-up, subject off-center left, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Hands-only close-up of an anonymous woman's dirt-covered hands prising open a corroded rusted tin can on a worn wooden kitchen counter, flakes of rust scattered on the surface, dense stack of tarnished gold coins visible on edge inside, warm overhead kitchen light from one side, tight framing with empty counter space to the right, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Over-the-shoulder shot of an anonymous middle-aged man, face turned away, digging with a spade beside the exposed roots of an old oak tree on a hillside path, three rusted cans lined up on the soil beside the hole, late afternoon side light, dust in the air, subject in the left third with open hillside to the right, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Macro top-down detail of dozens of 19th-century American gold double eagle coins stacked on edge, some crusted with dried clay and rust, others gleaming untouched, laid on dark grey cloth, single hard raking light from the left creating deep relief on the struck surfaces, subject filling the lower two thirds with empty dark cloth above, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Empty-room shot of a modest rural American backyard at dusk, a stacked woodpile beside a shed, disturbed soil at its base, no people, single porch bulb glowing, blue evening light, deep shadow, wide composition with the woodpile in the right third and empty yard to the left, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Over-the-shoulder shot of an anonymous coin specialist in a shirt and loupe, face obscured, examining a dirt-encrusted gold coin under a bright desk lamp in a cluttered numismatic office, trays of coin flips and reference books stacked around, hard warm pool of lamp light against a dim room, subject in the right third, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Wide documentary shot of a rain-soaked freshly ploughed English farm field in July, furrows of dark brown clay running to a distant hedgerow and church spire, heavy grey cloud, no people, cold flat daylight, horizon placed low with vast sky above and the furrow lines leading from the bottom left, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Waist-level shot of an anonymous older man in a worn waterproof jacket and flat cap, face partially turned away, sweeping a battered second-hand metal detector across a ploughed field, headphones over his ears, mud on his boots, overcast English morning light, subject in the left third with open furrows to the right, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Hands-only close-up of muddy fingers lifting a small twisted piece of ornate 7th-century gold filigree from wet dark soil, garnet inlay catching the light, blades of grass and clay clinging to it, soft overcast daylight, extreme shallow focus, object off-center in the lower left with blurred field behind, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Macro museum-style detail of Anglo-Saxon gold sword pommel caps and hilt collars with cloisonne garnet inlay arranged on black velvet, intricate interlaced beast ornament, precise controlled museum lighting from above left, deep black background, objects clustered in the lower right with empty black space upper left, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Macro detail of a large thin Anglo-Saxon gold cross crumpled and folded roughly in half, its arms bent, resting on grey conservation foam under raking light that reveals every crease in the metal, dark neutral background, object placed low right with negative space above, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Empty-room interior of a modest 1970s English semi-detached front room, floral wallpaper, a dark wood sideboard, patterned carpet, dust motes in a shaft of light through net curtains, no people, an unremarkable blue and yellow porcelain vase standing on a shelf among ornaments, soft grey window light, vase off-center right with empty room to the left, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Over-the-shoulder shot of an anonymous elderly woman and a middle-aged man, both faces turned away, wrapping ornaments in newspaper amid half-filled cardboard boxes during a house clearance, mahogany furniture pushed to the walls, flat afternoon light through a bay window, figures in the right third with boxes leading into the left of frame, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Macro detail of an 18th-century Chinese imperial porcelain vase, pierced double-walled outer shell with lace-like reticulation, yellow ground and enamelled cartouches showing leaping carp, single soft key light from the left against a dark grey seamless backdrop, object standing in the right third with clean negative space to the left, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Wide interior of a crowded suburban auction warehouse, folding chairs packed with anonymous bidders seen from behind, arms raised, phones pressed to ears, fluorescent strip lighting and a raised wooden rostrum at the far end, motion blur on a few figures, wide angle, rostrum in the upper right third with heads filling the lower frame, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Extreme close-up of a wooden auction gavel with its head snapped off the handle, splintered wood fibres exposed, lying on a scuffed lectern beside a bidding paddle, harsh overhead light, dark blurred saleroom behind, object in the lower left with empty lectern surface to the right, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Empty-room shot of a deserted auction saleroom after a sale, rows of empty folding chairs, a single lot number card on the floor, dust in a low shaft of evening light through high dirty windows, no people, wide composition with the rostrum small in the right third, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Over-the-shoulder shot of an anonymous elderly woman sitting alone at a kitchen table by a rain-streaked window, hands folded around a cold cup of tea, an unopened envelope on the oilcloth beside her, cold grey winter daylight, face turned entirely away from camera, figure in the left third with the window and empty room to the right, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Wide closing shot of an ordinary suburban street at dusk seen from the pavement, identical semi-detached houses, one lit front window with the silhouette of ornaments on a shelf, wet tarmac reflecting streetlights, no people, deep blue hour light, houses in the lower right with a large expanse of dusk sky above and left, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9"
+  ],
+  "footage_queries": [
+    "gold coins closeup macro",
+    "rusted metal can soil",
+    "metal detecting ploughed field",
+    "hands digging soil closeup",
+    "english farmland furrows overcast",
+    "auction room bidding gavel",
+    "chinese porcelain vase closeup",
+    "antique shop shelves ornaments",
+    "house clearance cardboard boxes",
+    "california golden hills dawn"
+  ],
+  "archive_queries": [
+    "american gold double eagle coin",
+    "nineteenth century gold coins",
+    "anglo saxon gold garnet metalwork",
+    "sword pommel gold ornament",
+    "qianlong porcelain imperial vase",
+    "chinese famille rose porcelain",
+    "auction house historic interior",
+    "english rural landscape painting",
+    "victorian domestic interior",
+    "antique clock mechanism"
+  ],
+  "reject": {
+    "clip": [],
+    "arch": []
+  },
+  "style_override": {
+    "generated_share": 0.3,
+    "crf": 22,
+    "base_duration_range": [
+      4.2,
+      5.4
+    ],
+    "deceleration_range": [
+      1.1,
+      1.3
+    ],
+    "_вступление": "Три минуты быстрой перебивки кусками по 2-5 секунд. Крючок манифеста — сломанный молоток — стоит в первых строках, под него и работает темп.",
+    "intro_footage_seconds": 182,
+    "intro_clip_duration_range": [
+      2,
+      5
+    ],
+    "intro_photo_duration_range": [
+      2.5,
+      5
+    ],
+    "intro_clip_share": 0.65,
+    "intro_transition_duration_range": [
+      0.3,
+      0.6
+    ],
+    "body_clip_every_n_shots": 3,
+    "transitions": [
+      "dissolve",
+      "fade",
+      "fadeslow",
+      "hblur",
+      "smoothleft",
+      "smoothup",
+      "smoothdown",
+      "slideleft",
+      "slideright",
+      "wipeleft",
+      "circleopen"
+    ],
+    "transition_duration_range": [
+      0.7,
+      1.3
+    ],
+    "hard_cut_probability": 0.0,
+    "effects_enabled": true,
+    "effect_probability": 0.26,
+    "effects": [
+      "vintage_blemish",
+      "charcoal_film",
+      "sunset_2",
+      "heat_print",
+      "brass_gleam",
+      "by_the_fireplace"
+    ],
+    "fps": 30
+  },
+  "_источники": {
+    "policy": "Every core claim tagged VERIFIED / SINGLE SOURCE / DISPUTED / LEGEND. Disputed items are flagged in narration, not asserted.",
+    "do_not_claim": [
+      "Saddle Ridge coins came from the 1900 San Francisco Mint theft (US Mint denies any link)",
+      "Any connection to Jesse James or Black Bart",
+      "The Saddle Ridge couple's real names or property location",
+      "A specific reason for the Herbert / Johnson rift",
+      "The identity of the defaulting buyer of the Qianlong vase",
+      "That the vase was definitely looted from the Old Summer Palace in 1860",
+      "The exact 2013 private-treaty price of the vase"
+    ],
+    "primary_sources": [
+      "BBC",
+      "Associated Press",
+      "Bloomberg",
+      "Financial Times",
+      "CNN",
+      "NPR",
+      "Coin World",
+      "Numismatic News",
+      "National Geographic",
+      "Guinness World Records",
+      "Staffordshire Hoard official site / Treasure Valuation Committee",
+      "Prospect Magazine"
+    ]
+  },
+  "youtube": {
+    "title": "3 Finds. 70 Million Dollars. All Nearly Thrown Out.",
+    "title_alternatives": [
+      "Why Was This GBP43,000,000 Vase Never Paid For?",
+      "He Kicked Past It For Years. Then He Looked Down."
+    ],
+    "description_intro": "A rusty can on a footpath. A ploughed field in Staffordshire. A vase on a shelf in a suburban living room. Three ordinary people found roughly seventy million dollars in objects that almost everybody else had already walked past - and every one of them paid a price for it that nobody mentions. One of the three record numbers in this video was never actually paid at all.",
+    "chapters": [
+      "The gavel that broke, and a can in the mud",
+      "Ten million dollars nobody can claim",
+      "Five days that ended a friendship",
+      "The vase on a suburban shelf",
+      "The record that was never paid"
+    ],
+    "description_notes": "All figures, dates and names in this video are taken from published reporting and institutional records, including the BBC, AP, Bloomberg, Coin World, Numismatic News, the Treasure Valuation Committee and Guinness World Records. Where a detail is disputed or unconfirmed, it is flagged in the narration rather than presented as fact.",
+    "hashtags": [
+      "#ForgottenFortunes",
+      "#TreasureFound",
+      "#SaddleRidgeHoard",
+      "#StaffordshireHoard",
+      "#HistoryDocumentary"
+    ],
+    "tags": [
+      "saddle ridge hoard",
+      "staffordshire hoard",
+      "pinner vase",
+      "buried treasure found",
+      "gold coins found in a can",
+      "metal detecting finds",
+      "treasure hunting documentary",
+      "biggest treasure ever found",
+      "anglo saxon gold hoard",
+      "most expensive vase ever sold",
+      "house clearance find",
+      "real treasure stories",
+      "history documentary",
+      "lost treasure documentary",
+      "auction record broken",
+      "chinese vase auction record",
+      "forgotten fortunes"
+    ],
+    "thumbnail_at": 620.0
+  },
+  "_превью": "Три варианта превью из манифеста (обложки с текстом) конвейером не делаются: он режет превью из самого ролика и кладёт заголовок. Промпты обложек сохранены здесь — их можно отрисовать отдельно.",
+  "_превью_промпты": [
+    {
+      "variant": "A_the_can",
+      "overlay_text": "$10M IN A RUSTY CAN",
+      "text_placement": "left third, three lines, vertically centred",
+      "text_colors": {
+        "accent": "#FFD84D",
+        "body": "#FFFFFF",
+        "stroke": "#000000",
+        "stroke_px": 6
+      },
+      "prompt": "Hyperrealistic 16:9 thumbnail. A single rusted 19th-century metal can, lid prised open, overflowing with gleaming gold coins that spill onto dark wet soil, dominating the right half of the frame in sharp focus. Behind and slightly left, an anonymous fictional adult woman in her forties in a plain outdoor jacket, shot from a flattering three-quarter angle, mouth open in genuine shock, eyes wide, hand half raised to her face, lit by one strong warm key light from the lower right that bounces gold onto her skin. Deep black background falling off to pure shadow, heavy contrast, rich saturated golds against near-black. The entire LEFT THIRD of the frame must be left completely empty, clean, unlit dark background with no objects, no hands and no detail. Do NOT render any text, letters, numbers, logos or watermarks anywhere in the image. Photorealistic skin texture, cinematic lighting, 8k, sharp focus."
+    },
+    {
+      "variant": "B_broken_gavel",
+      "overlay_text": "GBP43M NEVER PAID",
+      "text_placement": "left third, two lines, upper-middle",
+      "text_colors": {
+        "accent": "#FF3B30",
+        "body": "#F5F5F5",
+        "stroke": "#000000",
+        "stroke_px": 6
+      },
+      "prompt": "Hyperrealistic 16:9 thumbnail. Extreme close-up of a wooden auction gavel snapped in two, splintered pale wood fibres exposed at the break, lying on a scuffed dark lectern, occupying the lower right of the frame in razor-sharp focus. Above and to the right, slightly out of focus, an anonymous fictional adult man in his sixties in a tweed jacket, shot from a flattering slightly low angle, face frozen in stunned disbelief, eyebrows raised, staring downward. Single hard cold key light from the upper right, dramatic falloff into a near-black background, very high contrast. The entire LEFT THIRD of the frame must remain empty, clean, unlit black background with no objects or detail of any kind. Do NOT render any text, letters, numbers, logos or watermarks anywhere in the image. Photorealistic wood grain and skin texture, cinematic lighting, 8k."
+    },
+    {
+      "variant": "C_the_shelf",
+      "overlay_text": "ON A SHELF FOR 80 YEARS",
+      "text_placement": "left third, three lines, vertically centred",
+      "text_colors": {
+        "accent": "#FFD84D",
+        "body": "#FFFFFF",
+        "stroke": "#000000",
+        "stroke_px": 6
+      },
+      "prompt": "Hyperrealistic 16:9 thumbnail. A single ornate 18th-century Chinese porcelain vase with a pierced lace-like outer shell, yellow ground and enamelled fish medallions, standing alone on a dusty 1970s domestic shelf, occupying the centre-right of the frame in sharp focus, one strong warm key light from the right rim-lighting its edge. To the right and slightly behind, an anonymous fictional adult man in his fifties in a plain shirt, shot from a flattering three-quarter angle, face showing dawning realisation and alarm, eyes locked on the vase. Everything else falls into deep shadow, near-black background, extreme contrast between the lit vase and the dark room. The entire LEFT THIRD of the frame must be left completely empty, clean, unlit dark background with no ornaments, no shelf and no detail. Do NOT render any text, letters, numbers, logos or watermarks anywhere in the image. Photorealistic porcelain glaze and skin texture, cinematic lighting, 8k."
+    }
+  ]
+}
