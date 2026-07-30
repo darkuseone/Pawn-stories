@@ -48,13 +48,16 @@
     "empty auction room before the sale, warm wood panelling, rows of chairs, cinematic, 16:9"
   ],
 
+  "_запросы": "Общие слова дают общий сток: «flea market stalls morning» на первом прогоне привело эскалаторы в торговом центре. Запрос должен называть ПРЕДМЕТ и ФАКТУРУ, а не обстановку — тогда выдача попадает в тему.",
   "footage_queries": [
-    "antique shop interior",
-    "flea market stalls morning",
-    "hands examining antique object",
-    "auction house bidding",
-    "magnifying glass close up",
-    "old wooden workbench tools"
+    "antique shop interior wooden shelves",
+    "vintage objects on wooden table",
+    "hands examining antique object closeup",
+    "magnifying glass inspecting detail",
+    "old workbench hand tools patina",
+    "candle lamp light on aged wood",
+    "turning pages of an old book",
+    "brass and copper objects closeup"
   ],
   "archive_queries": [
     "silver hallmarks close up",
