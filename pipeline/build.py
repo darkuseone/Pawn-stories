@@ -63,7 +63,14 @@ CLIP_MAX_SECONDS = 15.0
 # конвейером. Как только КАЖДЫЙ клип в пуле показан столько раз, слот
 # уходит фотографии или генерации: обеих в разы больше, повтор там
 # растворяется в разнообразии.
-MAX_CLIP_REPEATS = 5
+MAX_CLIP_REPEATS = 3
+
+# Ходы камеры для ПОВТОРНЫХ показов клипа, см. render.FOOTAGE_MOVES. Первый
+# показ идёт как снят, второй и третий — с медленным наездом или уводом.
+# ClipCutter к этому моменту уже отдаёт другой КУСОК файла, так что вместе
+# это разные план и движение: узнать в них один исходник трудно.
+CLIP_REPEAT_MOVES = ["drift_in", "drift_left", "drift_out", "drift_right",
+                     "drift_up"]
 
 
 def log(*a):
@@ -180,6 +187,9 @@ class ShotPicker:
         self.last = None
         self.hits = 0          # сколько раз попали по смыслу
         self.calls = 0
+        # сколько раз выданный файл показывали ДО этого раза: 0 — первый
+        # показ. По нему монтаж решает, вешать ли на клип ход камеры.
+        self.last_repeat = 0
 
     def take(self, t: float, text: str = ""):
         n = len(self.pool)
@@ -200,6 +210,7 @@ class ShotPicker:
         best = min(range(n), key=score)
         if len(want & self.pool[best][2]):
             self.hits += 1
+        self.last_repeat = self.used.get(best, 0)
         self.used[best] = self.used.get(best, 0) + 1
         self.last = self.pool[best][0]
         return self.pool[best][0], self.pool[best][1]
@@ -424,6 +435,12 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
 
     clip_cap_hit = [False]
 
+    def repeat_move(times_before: int):
+        """Ход камеры для клипа: на первом показе нет, дальше разный."""
+        if times_before <= 0:
+            return None
+        return CLIP_REPEAT_MOVES[(times_before - 1) % len(CLIP_REPEAT_MOVES)]
+
     def clip_available():
         """Ложь, когда пул стока исчерпан по MAX_CLIP_REPEATS — см. константу."""
         if not clip_pick.exhausted(MAX_CLIP_REPEATS):
@@ -521,6 +538,7 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
             src, _ = clip_pick.take(t, said_at(t, dur))
             shots.append(dict(kind="clip", file=src, tag="clip",
                               src_start=cutter.take_start(src, dur),
+                              move=repeat_move(clip_pick.last_repeat),
                               start=round(t, 3), duration=dur,
                               transition=tr, transition_dur=trd,
                               effect=st.effect()))
@@ -625,6 +643,7 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
             src, _ = clip_pick.take(start, said)
             shots.append(dict(kind="clip", file=src, tag="clip",
                               src_start=cutter.take_start(src, dur),
+                              move=repeat_move(clip_pick.last_repeat),
                               start=start, duration=dur,
                               **{k: cfg[k] for k in
                                  ("transition", "transition_dur", "effect")}))
@@ -852,7 +871,8 @@ def render_one(args):
     if sh["kind"] == "clip":
         render.render_footage_clip(Path(sh["file"]), out, sh["render_dur"],
                                    start=sh.get("src_start", 0.0),
-                                   effect=sh.get("effect"))
+                                   effect=sh.get("effect"),
+                                   move=sh.get("move"))
     else:
         prep = tmp / f"prep_{n:04d}.jpg"
         render.prepare_image(Path(sh["file"]), prep, sh["framing"])

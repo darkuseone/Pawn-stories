@@ -289,6 +289,23 @@ def images_batch(prompts, out: Path, model, key, poll=120):
 # ────────────────────────── АРХИВЫ ──────────────────────────
 # Ключ нужен только Smithsonian. Остальные пять открыты.
 
+def ok(r, name, q):
+    """
+    Ответ удался? Иначе — В ЛОГ, а не молча.
+
+    Так этот код и подвёл. Ни один источник не смотрел на код ответа, а
+    разбирал тело через .get(...) с пустым значением по умолчанию: любой
+    401, 403 или 429 превращался в пустой список, неотличимый от честного
+    «ничего не нашлось». На прогоне ff-ep03 все 35 клипов приехали с одного
+    Pixabay, Pexels не дал ни одного — и в логе об этом не было НИ СЛОВА,
+    потому что жаловаться было некому.
+    """
+    if r.status_code == 200:
+        return True
+    log(f"    ! {name} «{q}»: ответ {r.status_code} {r.text[:120]}")
+    return False
+
+
 def src_pexels(q, n):
     k = (os.environ.get("PEXELS_API_KEY") or "").strip()
     if not k:
@@ -296,6 +313,8 @@ def src_pexels(q, n):
     r = requests.get("https://api.pexels.com/videos/search", timeout=TIMEOUT,
                      headers={"Authorization": k},
                      params={"query": q, "per_page": n, "orientation": "landscape"})
+    if not ok(r, "pexels", q):
+        return []
     out, dropped = [], 0
     for v in r.json().get("videos", []):
         files = [f for f in v["video_files"]
@@ -347,6 +366,8 @@ def src_pixabay(q, n):
         return []
     r = requests.get("https://pixabay.com/api/videos/", timeout=TIMEOUT,
                      params={"key": k, "q": q, "per_page": max(n, 3)})
+    if not ok(r, "pixabay", q):
+        return []
     out, dropped = [], 0
     for v in r.json().get("hits", []):
         vv = v.get("videos", {})
@@ -389,6 +410,8 @@ def src_archive_org(q, n):
                                   f'licenseurl:(*publicdomain*)',
                              "fl[]": "identifier", "rows": n * 2,
                              "output": "json"})
+    if not ok(r, "archive.org", q):
+        return []
     out = []
     # не больше четырёх обращений за метаданными и по 25 секунд на каждое:
     # это самый медленный источник, и на нём легко просидеть минуты
@@ -424,6 +447,8 @@ def src_met(q, n):
     r = requests.get("https://collectionapi.metmuseum.org/public/collection/"
                      "v1/search", timeout=TIMEOUT, headers=UA,
                      params={"q": q, "hasImages": "true", "isPublicDomain": "true"})
+    if not ok(r, "met", q):
+        return []
     out = []
     for oid in (r.json().get("objectIDs") or [])[:n * 2]:
         o = requests.get("https://collectionapi.metmuseum.org/public/"
@@ -441,6 +466,8 @@ def src_loc(q, n):
     """Библиотека Конгресса. Ключ не нужен."""
     r = requests.get("https://www.loc.gov/photos/", timeout=TIMEOUT, headers=UA,
                      params={"q": q, "fo": "json", "c": n * 2})
+    if not ok(r, "loc", q):
+        return []
     out = []
     for it in r.json().get("results", [])[:n * 2]:
         imgs = it.get("image_url") or []
@@ -460,6 +487,8 @@ def src_wikimedia(q, n):
                              "gsrlimit": n * 2, "prop": "imageinfo",
                              "iiprop": "url|extmetadata", "iiurlwidth": 1920,
                              "format": "json"})
+    if not ok(r, "wikimedia", q):
+        return []
     out = []
     for page in (r.json().get("query", {}).get("pages", {}) or {}).values():
         ii = (page.get("imageinfo") or [{}])[0]
@@ -470,6 +499,44 @@ def src_wikimedia(q, n):
         url = ii.get("thumburl") or ii.get("url")
         if url:
             out.append({"url": url, "src": "wikimedia", "kind": "image"})
+        if len(out) >= n:
+            break
+    return out
+
+
+def src_wikimedia_video(q, n):
+    """
+    Хроника с Commons. Ключа не нужно, но нужен User-Agent.
+
+    Добавлен, потому что видеостоков по узким историческим темам мало:
+    на ff-ep03 из трёх заявленных источников материал дал ровно один.
+    Commons отдаёт webm и ogv — ffmpeg их читает, а дальше всё равно идёт
+    перекодирование в общий формат, так что контейнер значения не имеет.
+    """
+    r = requests.get("https://commons.wikimedia.org/w/api.php", timeout=TIMEOUT,
+                     headers=UA,
+                     params={"action": "query", "generator": "search",
+                             "gsrsearch": f"{q} filetype:video",
+                             "gsrlimit": n * 2, "prop": "imageinfo",
+                             "iiprop": "url|extmetadata|size",
+                             "format": "json"})
+    if not ok(r, "wikimedia_video", q):
+        return []
+    out = []
+    for page in (r.json().get("query", {}).get("pages", {}) or {}).values():
+        ii = (page.get("imageinfo") or [{}])[0]
+        lic = ((ii.get("extmetadata") or {}).get("LicenseShortName", {})
+               .get("value", "")).lower()
+        if not any(t in lic for t in ("public domain", "cc0", "pd-")):
+            continue
+        url = ii.get("url")
+        if not url or not url.lower().endswith((".webm", ".ogv", ".mp4")):
+            continue
+        # тяжёлые файлы отсекаем здесь: на Commons рядом с нарезкой лежат
+        # оцифровки целых катушек на сотни мегабайт
+        if int(ii.get("size") or 0) > MAX_FILE_BYTES:
+            continue
+        out.append({"url": url, "src": "wikimedia", "kind": "video"})
         if len(out) >= n:
             break
     return out
@@ -491,13 +558,14 @@ ALL_SOURCES = {
     "pexels": src_pexels,
     "pixabay": src_pixabay,
     "archive_org": src_archive_org,
+    "wikimedia_video": src_wikimedia_video,
     "nasa": src_nasa,
     "met": src_met,
     "loc": src_loc,
     "wikimedia": src_wikimedia,
 }
 
-VIDEO_SOURCES = [src_pexels, src_pixabay, src_archive_org]
+VIDEO_SOURCES = [src_pexels, src_pixabay, src_archive_org, src_wikimedia_video]
 PHOTO_SOURCES = [src_met, src_loc, src_wikimedia]
 
 
@@ -589,6 +657,7 @@ def gather(queries, per_query, sources, out: Path, kind, budget=GATHER_BUDGET):
         log(f"  уже есть {len(have)} шт, продолжаю с номера {n:03d}")
 
     got = []
+    by_src = {}
     for q in queries:
         for fn in sources:
             if time.time() > deadline:
@@ -597,7 +666,9 @@ def gather(queries, per_query, sources, out: Path, kind, budget=GATHER_BUDGET):
                 items = fn(q, per_query)
             except Exception as e:
                 log(f"  ! {fn.__name__} на «{q}»: {e}")
+                by_src.setdefault(fn.__name__[4:], 0)
                 continue
+            by_src[fn.__name__[4:]] = by_src.get(fn.__name__[4:], 0) + len(items)
             for it in items:
                 if it["url"] in seen:
                     continue
@@ -618,6 +689,13 @@ def gather(queries, per_query, sources, out: Path, kind, budget=GATHER_BUDGET):
         if time.time() > deadline:
             break
     man.write_text(json.dumps(old + got, indent=1))
+    # Сколько предложил КАЖДЫЙ источник. Источник, стабильно отдающий ноль,
+    # — это либо мёртвый ключ, либо запросы не того словаря, и то и другое
+    # чинится только когда видно. Раньше на весь сбор была одна строка
+    # «добавлено 35», по которой это было неотличимо.
+    if by_src:
+        log("  по источникам: " + ", ".join(
+            f"{s} {c}" for s, c in sorted(by_src.items(), key=lambda x: -x[1])))
     log(f"  {kind}: добавлено {len(got)}, всего {len(old) + len(got)}")
     return got
 
