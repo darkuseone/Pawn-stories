@@ -213,18 +213,29 @@ Look at the attached frame and decide whether it can be used as illustrative \
 footage in this video.
 
 ACCEPT the frame if it shows: the subject matter itself, related objects, \
-period or antique items, hands handling or examining objects, workshop or \
-shop or market or auction interiors, archival photographs or paintings, \
-textures such as aged wood, metal, paper, fabric, or any atmospheric shot \
-that a viewer would accept as belonging to this video.
+period or antique items, hands handling or examining OLD or VALUABLE objects \
+(coins, jewellery, ceramics, manuscripts, relics), shop or market or auction \
+interiors, RESTORATION or conservation work on an antique object, archival \
+photographs or paintings, textures such as aged wood, metal, paper, fabric, \
+or any atmospheric shot that a viewer would accept as belonging to a video \
+about historic finds and antiques.
 
 REJECT the frame if it shows: something clearly unrelated to the subject \
 (food, animals, sports, modern offices, shopping malls, vehicles, nature \
-landscapes, people in modern clothing in modern settings, fireworks, \
-cosmetics, abstract computer graphics, medical or laboratory imagery), \
-or if it is a chart, a plain book cover with no imagery, a screenshot, a \
-watermark or logo card, or an architectural survey photo of a building \
-exterior.
+landscapes, fireworks, cosmetics, abstract computer graphics, medical or \
+laboratory imagery), or if it is a chart, a plain book cover with no imagery, \
+a screenshot, a watermark or logo card, or an architectural survey photo of \
+a building exterior.
+
+REJECT ALSO any contemporary hobby, craft, or DIY workshop scene that is not \
+about restoring or examining an antique — for example: someone sanding, \
+carving, painting or assembling a modern item such as a skateboard, \
+furniture, or sports equipment; a person in modern casual clothing (t-shirt, \
+hoodie, sneakers) using power tools; a modern garage, studio, or maker space. \
+A workshop only belongs in this video if the object being worked on is \
+visibly old, ornate, or clearly the antique/relic itself — a plain pale \
+wooden board being sanded is NOT that, even though "workshop" sounds like it \
+should fit.
 
 Answer with STRICT JSON and nothing else:
 {{"keep": true or false, "why": "at most 12 words", "what": "what you see, at most 8 words"}}"""
