@@ -389,7 +389,10 @@ def triage(path: Path, im, bad, pale, src, query, current_queries, trusted):
 
 def vet_all(job, work: Path, use_vision=True):
     topic, desc = topic_text(job)
-    model = job.get("vet_model", DEFAULT_VET_MODEL)
+    # Модель не задаётся здесь: её подбирает choose_model ниже, на пробной
+    # картинке. Раньше на этом месте стояла зашитая константа с угаданным
+    # именем — она и оказалась несуществующей.
+    model = None
     key = (os.environ.get("XAI_API_KEY") or "").strip()
     trusted = tuple(job.get("trusted_sources", TRUSTED_SOURCES))
     current_queries = set(job.get("footage_queries", []) +
@@ -494,6 +497,9 @@ def vet_all(job, work: Path, use_vision=True):
             f"(${cost/asked*1000:.2f} за тысячу кадров). "
             f"Цена взята из PRICE_IN_PER_M/PRICE_OUT_PER_M в vet.py — "
             f"сверить с прайсом xAI, токены посчитаны по ответам API.")
+    elif not vision_ok:
+        log("── зрение НЕ РАБОТАЛО: отбор сделан одним локальным ярусом, "
+            "спорный материал остался в ролике")
     else:
         log("── зрение не понадобилось: всё решил первый ярус")
 
