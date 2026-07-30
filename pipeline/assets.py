@@ -13,6 +13,7 @@ assets.py — собирает всё, из чего потом монтируе
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -287,15 +288,49 @@ def src_pexels(q, n):
     r = requests.get("https://api.pexels.com/videos/search", timeout=TIMEOUT,
                      headers={"Authorization": k},
                      params={"query": q, "per_page": n, "orientation": "landscape"})
-    out = []
+    out, dropped = [], 0
     for v in r.json().get("videos", []):
         files = [f for f in v["video_files"]
                  if f.get("width", 0) >= 1280 and f.get("link")]
-        if files:
-            best = sorted(files, key=lambda f: abs(f["width"] - 1920))[0]
-            out.append({"url": best["link"], "src": "pexels",
-                        "dur": v.get("duration", 0), "kind": "video"})
+        if not files:
+            continue
+        # у Pexels нет поля тегов, но есть человекочитаемый адрес страницы
+        # вида /video/antique-shop-interior-12345 — слова темы лежат в нём
+        if not relevant(q, (v.get("url") or "").replace("-", " ")):
+            dropped += 1
+            continue
+        best = sorted(files, key=lambda f: abs(f["width"] - 1920))[0]
+        out.append({"url": best["link"], "src": "pexels",
+                    "dur": v.get("duration", 0), "kind": "video"})
+    if dropped:
+        log(f"    pexels «{q}»: отсеяно {dropped} не по теме")
     return out
+
+
+def relevant(query: str, tags: str) -> bool:
+    """
+    Есть ли у находки хоть одно значимое слово из запроса.
+
+    Стоки ищут по ИЛИ и добирают выдачу чем попало, лишь бы отдать
+    запрошенное число. Замер на первом прогоне pawn-01: запрос
+    «candle lamp light on aged wood» принёс бананы, петуха с курами,
+    помаду, пиво, фейерверк и статую Свободы — двадцать четыре ролика
+    из тридцати девяти оказались не по теме, и всё это человеку потом
+    отсматривать руками на листе отбора.
+
+    Проверка нарочно мягкая: достаточно ОДНОГО совпадения. Строгая
+    (все слова) оставила бы пустую выдачу — у стоков нет столько
+    материала по узким запросам. Задача не отобрать лучшее, а отсеять
+    заведомо чужое.
+    """
+    stop = {"the", "a", "an", "of", "and", "or", "in", "on", "at", "to",
+            "with", "closeup", "close", "up", "detail", "shot", "old"}
+    want = {w for w in re.findall(r"[a-z]+", query.lower())
+            if len(w) > 2 and w not in stop}
+    if not want:
+        return True
+    have = set(re.findall(r"[a-z]+", (tags or "").lower()))
+    return bool(want & have)
 
 
 def src_pixabay(q, n):
@@ -304,13 +339,19 @@ def src_pixabay(q, n):
         return []
     r = requests.get("https://pixabay.com/api/videos/", timeout=TIMEOUT,
                      params={"key": k, "q": q, "per_page": max(n, 3)})
-    out = []
+    out, dropped = [], 0
     for v in r.json().get("hits", []):
         vv = v.get("videos", {})
         link = (vv.get("large") or vv.get("medium") or {}).get("url")
-        if link:
-            out.append({"url": link, "src": "pixabay",
-                        "dur": v.get("duration", 0), "kind": "video"})
+        if not link:
+            continue
+        if not relevant(q, v.get("tags", "")):
+            dropped += 1
+            continue
+        out.append({"url": link, "src": "pixabay",
+                    "dur": v.get("duration", 0), "kind": "video"})
+    if dropped:
+        log(f"    pixabay «{q}»: отсеяно {dropped} не по теме")
     return out
 
 
@@ -426,8 +467,43 @@ def src_wikimedia(q, n):
     return out
 
 
+# Источники по умолчанию. Список СВОЙ У КАНАЛА и задаётся в спецификации
+# полями video_sources / photo_sources — здесь только умолчание.
+#
+# NASA из фото убрана. Это космическое агентство: на канале про древности
+# по любому запросу оно отдаёт снимки Земли и техники, то есть чистый шум.
+# В исходном проекте (научно-исторический канал) она была на месте.
+#
+# Замер на первом прогоне pawn-01, 40 архивных фото: Met дал почти весь
+# годный материал — предметы, мебель, часы, живопись. Library of Congress
+# отдал в основном обложки книг и обмеры зданий, годного меньше половины.
+# Wikimedia не дала ничего: фильтр лицензий отсекает почти всё, что она
+# находит по предметным запросам.
+ALL_SOURCES = {
+    "pexels": src_pexels,
+    "pixabay": src_pixabay,
+    "archive_org": src_archive_org,
+    "nasa": src_nasa,
+    "met": src_met,
+    "loc": src_loc,
+    "wikimedia": src_wikimedia,
+}
+
 VIDEO_SOURCES = [src_pexels, src_pixabay, src_archive_org]
-PHOTO_SOURCES = [src_nasa, src_met, src_loc, src_wikimedia]
+PHOTO_SOURCES = [src_met, src_loc, src_wikimedia]
+
+
+def sources_from(job, key, default):
+    """Источники по именам из спецификации. Опечатка роняет сразу, со списком."""
+    names = job.get(key)
+    if not names:
+        return default
+    bad = [n for n in names if n not in ALL_SOURCES]
+    if bad:
+        raise SystemExit(
+            f"{key}: нет таких источников " + ", ".join(bad) +
+            "\nесть: " + ", ".join(sorted(ALL_SOURCES)))
+    return [ALL_SOURCES[n] for n in names]
 
 
 def fetch(url, dst: Path, limit=MAX_FILE_BYTES, seconds=FETCH_SECONDS):
@@ -644,10 +720,13 @@ def fetch_material(job, work: Path):
     правятся после того, как посмотришь, что по ним нашлось, и гонять ради
     этого заново озвучку за деньги незачем.
     """
-    log("── футажи")
-    gather(job["footage_queries"], 3, VIDEO_SOURCES, work / "footage", "clip")
-    log("── реальные фото из архивов")
-    gather(job["archive_queries"], 4, PHOTO_SOURCES, work / "archive", "arch")
+    vids = sources_from(job, "video_sources", VIDEO_SOURCES)
+    phot = sources_from(job, "photo_sources", PHOTO_SOURCES)
+    log("── футажи (" + ", ".join(f.__name__[4:] for f in vids) + ")")
+    gather(job["footage_queries"], 3, vids, work / "footage", "clip")
+    log("── реальные фото из архивов (" +
+        ", ".join(f.__name__[4:] for f in phot) + ")")
+    gather(job["archive_queries"], 4, phot, work / "archive", "arch")
 
 
 def main(job_path, stage="all"):
