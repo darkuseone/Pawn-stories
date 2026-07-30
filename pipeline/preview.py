@@ -57,6 +57,28 @@ def frame_of(path: Path, cell: Image.Image = None):
     return im.resize((CELL_W, CELL_H), Image.LANCZOS)
 
 
+def pale_share(im: Image.Image) -> float:
+    """
+    Какая доля кадра — почти белое.
+
+    Музейные и библиотечные каталоги снимают предмет на белом фоне. Само
+    фото при этом отличное и предмет настоящий, но на тёплом тёмном
+    цветокоре канала такой кадр становится бледным прямоугольником и
+    выбивается из ролика — на прогоне pawn-01 таких набралось четыре из
+    двадцати пяти, и заметно это стало только на готовом видео.
+
+    Здесь это не отказ, а пометка: решает человек. Кадр с белым фоном
+    иногда именно то, что нужно, — например, единственное существующее
+    изображение предмета, о котором идёт речь.
+    """
+    small = im.convert("L").resize((64, 36))
+    px = list(small.getdata())
+    return sum(1 for p in px if p > 224) / len(px)
+
+
+PALE_LIMIT = 0.45
+
+
 def sheet(files, out: Path, kind: str, rejected):
     if not files:
         log(f"  {kind}: пусто")
@@ -67,10 +89,19 @@ def sheet(files, out: Path, kind: str, rejected):
     big = ImageFont.truetype(FONT, 34)
     small = ImageFont.truetype(FONT, 17)
 
+    pale = []
     for i, f in enumerate(files):
         x, y = (i % COLS) * CELL_W, (i // COLS) * CELL_H
         try:
-            im.paste(frame_of(f), (x, y))
+            cell = frame_of(f)
+            im.paste(cell, (x, y))
+            if pale_share(cell) > PALE_LIMIT:
+                pale.append(index_of(f))
+                # жёлтая рамка: не отказ, а «посмотри внимательнее»
+                d.rectangle([x + 2, y + 2, x + CELL_W - 3, y + CELL_H - 3],
+                            outline=(235, 200, 70), width=3)
+                d.text((x + CELL_W - 150, y + CELL_H - 30), "белый фон",
+                       font=small, fill=(235, 200, 70))
         except Exception as e:
             d.rectangle([x, y, x + CELL_W, y + CELL_H], fill=(40, 20, 20))
             d.text((x + 12, y + 90), f"не открылся\n{e}"[:60], font=small)
@@ -90,6 +121,9 @@ def sheet(files, out: Path, kind: str, rejected):
 
     im.save(out, quality=88)
     log(f"  {kind}: {len(files)} шт -> {out.name}")
+    if pale:
+        log(f"    жёлтым обведено {len(pale)} на белом фоне: {sorted(pale)}")
+        log(f"    на тёмном тёплом грейде они станут бледными прямоугольниками")
     return out
 
 

@@ -162,10 +162,17 @@ def build_audio(voice: Path, bed, out: Path, total: float,
     же цепочке, а не копируется как есть.
     """
     norm = "loudnorm=I=-16:TP=-1.5:LRA=9,alimiter=limit=0.92"
+    # Дорожка пишется СТЕРЕО и в 48 кГц. Замер готового ролика показал моно
+    # на 96 кГц: начитка приходит от ElevenLabs моно, amix берёт раскладку по
+    # первому входу — и подложка, записанная в стерео, схлопывалась в моно,
+    # теряя всю ширину. Частота бралась максимальная из входов, отсюда и
+    # ненужные 96 кГц. 48 кГц стерео — то, во что YouTube всё равно
+    # перекодирует, и лишний раз портить исходник незачем.
+    fmt = "-ar 48000 -ac 2 -c:a aac -b:a 192k"
 
     if bed is None:
         run(f"ffmpeg -y -i {shlex.quote(str(voice))} -af {shlex.quote(norm)} "
-            f"-c:a aac -b:a 192k {shlex.quote(str(out))}")
+            f"{fmt} {shlex.quote(str(out))}")
         return
 
     # У короткого ролика хвост ухода не помещается: st не может быть
@@ -180,12 +187,16 @@ def build_audio(voice: Path, bed, out: Path, total: float,
         f"afade=t=out:st={st_out:.2f}:d={fade_out:.2f}' "
         f"-c:a aac -b:a 160k {shlex.quote(str(tmp))}")
 
-    filt = (f"[1:a]volume={bed_gain_db}dB[bed];"
-            f"[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0,"
+    # Оба входа приводятся к стерео ДО amix: иначе он берёт раскладку по
+    # первому входу, а первый — моно-начитка, и подложка теряет ширину.
+    filt = (f"[1:a]volume={bed_gain_db}dB,"
+            f"aformat=channel_layouts=stereo:sample_rates=48000[bed];"
+            f"[0:a]aformat=channel_layouts=stereo:sample_rates=48000[voc];"
+            f"[voc][bed]amix=inputs=2:duration=first:dropout_transition=0,"
             f"{norm}[a]")
     run(f"ffmpeg -y -i {shlex.quote(str(voice))} -i {shlex.quote(str(tmp))} "
         f"-filter_complex {shlex.quote(filt)} -map [a] "
-        f"-c:a aac -b:a 192k {shlex.quote(str(out))}")
+        f"{fmt} {shlex.quote(str(out))}")
 
 
 def mux(video: Path, audio: Path, out: Path):
