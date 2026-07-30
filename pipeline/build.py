@@ -55,6 +55,16 @@ INTRO_MOVES = ["push_in", "pan_right", "pan_left",
 # Долгий кадр всегда достаётся фотографии.
 CLIP_MAX_SECONDS = 15.0
 
+# Потолок повторов ОДНОГО стокового клипа. На ff-ep03 отбраковка (vet.py)
+# оставила от 35 скачанных клипов только 3 годных, а ритм «через каждые три
+# кадра — сток» на теле в 210+ кадров требовал под сотню клиповых слотов.
+# Без потолка это значит один и тот же клип на второй, сорок первой и
+# семьдесят четвёртой минуте — зритель это увидел и справедливо назвал
+# конвейером. Как только КАЖДЫЙ клип в пуле показан столько раз, слот
+# уходит фотографии или генерации: обеих в разы больше, повтор там
+# растворяется в разнообразии.
+MAX_CLIP_REPEATS = 5
+
 
 def log(*a):
     print(*a, flush=True)
@@ -199,6 +209,18 @@ class ShotPicker:
             return "не использовался"
         return (f"{self.hits} из {self.calls} кадров подобраны по смыслу "
                 f"({self.hits/self.calls*100:.0f}%)")
+
+    def exhausted(self, cap: int) -> bool:
+        """Правда, когда КАЖДЫЙ файл в пуле уже показан cap раз и больше.
+
+        Не «средний повтор», а именно минимум по пулу: пока есть хоть один
+        файл младше потолка, score() в take() и так предпочтёт его — ждать
+        нужно, пока честно закончатся вообще все варианты.
+        """
+        n = len(self.pool)
+        if not n:
+            return True
+        return min(self.used.get(j, 0) for j in range(n)) >= cap
 
 
 class MaterialMix:
@@ -399,6 +421,19 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     gen_pick = ShotPicker([(p, "gen", kw_of(p)) for p in images], total)
     arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total)
     clip_pick = ShotPicker([(p, "clip", kw_of(p)) for p in clips], total)
+
+    clip_cap_hit = [False]
+
+    def clip_available():
+        """Ложь, когда пул стока исчерпан по MAX_CLIP_REPEATS — см. константу."""
+        if not clip_pick.exhausted(MAX_CLIP_REPEATS):
+            return True
+        if not clip_cap_hit[0]:
+            clip_cap_hit[0] = True
+            log(f"  сток: весь пул ({len(clips)}) показан по {MAX_CLIP_REPEATS} "
+                f"раз — дальше слоты видео уходят фото и генерации")
+        return False
+
     mix = MaterialMix(st.generated_share, bool(images), bool(archive),
                       bool(clips))
     if not archive:
@@ -448,9 +483,9 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     run_kind, run_len = None, 0
     while t < intro_end:
         # чередуем видео и фото, но не даём трём одинаковым идти подряд
-        want_clip = st.rng.random() < st.intro_clip_share
+        want_clip = st.rng.random() < st.intro_clip_share and clip_available()
         if run_len >= 2:
-            want_clip = run_kind != "clip"
+            want_clip = run_kind != "clip" and clip_available()
         kind = "clip" if want_clip else "image"
         run_len = run_len + 1 if kind == run_kind else 1
         run_kind = kind
@@ -581,7 +616,7 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         # Долгий кадр — это всегда изображение.
         dur = round(end - start, 3)
         clip_ok = (not is_anchor and since_clip >= next_gap
-                   and dur <= CLIP_MAX_SECONDS)
+                   and dur <= CLIP_MAX_SECONDS and clip_available())
         got = mix.pick((["clip"] if clip_ok else []) + ["gen", "arch"])
 
         said = " ".join(m["text"] for m in marks[first:best + 1])
