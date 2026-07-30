@@ -44,9 +44,20 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent))
 
 XAI = "https://api.x.ai/v1"
-# Модель зрения. Меняется полем vet_model в спецификации — имена моделей
-# живут своей жизнью и переживают этот код.
-DEFAULT_VET_MODEL = "grok-2-vision-1212"
+
+# Модель зрения НЕ ЗАШИТА. Первый боевой прогон упёрся в
+# «Model not found: grok-2-vision-1212»: имя, взятое из головы, оказалось
+# несуществующим, зрение не сработало ни разу, и понятно это стало только
+# из лога. Имена моделей живут своей жизнью и переживают любой код, который
+# их угадывает.
+#
+# Поэтому модель ВЫБИРАЕТСЯ НА МЕСТЕ: список берётся у самого сервиса через
+# /v1/models, кандидаты сортируются по предпочтению, и первый, который
+# реально ответил на пробную картинку, идёт в работу. Поле vet_model в
+# спецификации перебивает выбор, если нужно закрепить конкретную.
+MODEL_PREFERENCE = ("vision", "grok-4", "grok-3", "grok-2")
+# Заведомо не для зрения: генераторы картинок и эмбеддинги.
+MODEL_EXCLUDE = ("image", "imagine", "embed", "tts", "whisper")
 
 PROBE_W = 512          # кадр под проверку: больше модели не нужно
 WORKERS = 6            # запросов к зрению одновременно
@@ -182,6 +193,57 @@ exterior.
 
 Answer with STRICT JSON and nothing else:
 {{"keep": true or false, "why": "at most 12 words", "what": "what you see, at most 8 words"}}"""
+
+
+def list_models(key):
+    """Что сервис вообще умеет. Пустой список — не беда, будет запасной путь."""
+    try:
+        r = requests.get(f"{XAI}/models", timeout=30,
+                         headers={"Authorization": f"Bearer {key}"})
+        if r.status_code != 200:
+            log(f"  ? список моделей не отдался ({r.status_code})")
+            return []
+        return [m.get("id", "") for m in r.json().get("data", []) if m.get("id")]
+    except Exception as e:
+        log(f"  ? список моделей не отдался ({e})")
+        return []
+
+
+def candidates(key, want=None):
+    """Кандидаты в модель зрения, в порядке предпочтения."""
+    if want:
+        return [want]
+    ids = [i for i in list_models(key)
+           if not any(x in i.lower() for x in MODEL_EXCLUDE)]
+    out = []
+    for pat in MODEL_PREFERENCE:
+        for i in ids:
+            if pat in i.lower() and i not in out:
+                out.append(i)
+    for i in ids:                      # всё остальное — следом
+        if i not in out:
+            out.append(i)
+    return out
+
+
+def choose_model(im, topic, desc, key, want=None):
+    """
+    Подбирает рабочую модель на ОДНОЙ пробной картинке.
+
+    Проверка боем, а не по имени: модель может существовать в списке и не
+    принимать изображения. Единственный надёжный признак — она ответила.
+    Стоит это один запрос на весь ролик.
+    """
+    cands = candidates(key, want)
+    if not cands:
+        return None, "сервис не отдал ни одной модели"
+    for name in cands[:6]:
+        keep, why, used = ask_vision(im, topic, desc, name, key, tries=1)
+        if keep is not None:
+            log(f"  зрение: работает модель {name}")
+            return name, ""
+        log(f"  ? {name} не подошла: {why}")
+    return None, f"ни одна из {len(cands[:6])} моделей не приняла картинку"
 
 
 def to_data_url(im: Image.Image) -> str:
@@ -343,6 +405,29 @@ def vet_all(job, work: Path, use_vision=True):
     if use_vision and not key:
         log("  ! нет XAI_API_KEY — зрение выключено, работает только "
             "локальный ярус")
+
+    # Рабочая модель ищется ОДИН раз на ролик, до всех проверок: иначе
+    # неверное имя означает полсотни одинаковых отказов подряд и ноль
+    # пользы, ровно как на первом прогоне.
+    if vision_ok:
+        probe = None
+        for files in groups.values():
+            for f in files:
+                im, bad, _ = cheap_problems(f)
+                if im is not None:
+                    probe = im
+                    break
+            if probe is not None:
+                break
+        if probe is None:
+            vision_ok = False
+        else:
+            model, why = choose_model(probe, topic, desc, key,
+                                      job.get("vet_model"))
+            if not model:
+                log(f"  ! зрение недоступно: {why} — работает только "
+                    f"локальный ярус, спорное остаётся в работе")
+                vision_ok = False
 
     for kind, files in groups.items():
         if not files:

@@ -8,7 +8,7 @@ on:
         required: true
         default: 'auction-01'
       stage:
-        description: 'material / assets / render / auto'
+        description: 'material / vet / assets / render / auto'
         required: true
         default: 'auto'
 
@@ -76,6 +76,7 @@ jobs:
           # отсутствующей.
           case "${{ steps.pick.outputs.stage }}" in
             material) need="" ; want="PEXELS_API_KEY PIXABAY_API_KEY" ;;
+            vet)      need="" ; want="XAI_API_KEY" ;;
             render)   need="" ; want="" ;;
             *)        need="XAI_API_KEY ELEVENLABS_API_KEY PEXELS_API_KEY PIXABAY_API_KEY" ; want="ELEVENLABS_VOICE_ID" ;;
           esac
@@ -113,6 +114,15 @@ jobs:
           restore-keys: |
             assets-${{ steps.pick.outputs.id }}-v1-
 
+      - name: Только отбраковка — без скачивания
+        if: steps.pick.outputs.stage == 'vet'
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          set -e
+          python pipeline/assets.py jobs/${{ steps.pick.outputs.job }}.json vet
+          python pipeline/preview.py jobs/${{ steps.pick.outputs.job }}.json
+
       - name: Этап 0 — добор материала и листы отбора
         if: steps.pick.outputs.stage == 'material'
         env:
@@ -126,7 +136,7 @@ jobs:
           python pipeline/preview.py jobs/${{ steps.pick.outputs.job }}.json
 
       - name: Выдаём листы отбора
-        if: steps.pick.outputs.stage == 'material'
+        if: steps.pick.outputs.stage == 'material' || steps.pick.outputs.stage == 'vet'
         uses: actions/upload-artifact@v4
         with:
           name: select-${{ steps.pick.outputs.job }}
@@ -140,7 +150,7 @@ jobs:
       # ссылкой, которая не протухает — а шаг отбора это ровно тот шаг,
       # где листы надо открыть, посмотреть и обсудить.
       - name: Листы отбора отдельной ссылкой
-        if: steps.pick.outputs.stage == 'material'
+        if: steps.pick.outputs.stage == 'material' || steps.pick.outputs.stage == 'vet'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: select-${{ steps.pick.outputs.job }}
@@ -161,7 +171,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Этап 1 — озвучка, изображения, материал
-        if: steps.pick.outputs.stage != 'render' && steps.pick.outputs.stage != 'material'
+        if: steps.pick.outputs.stage != 'render' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         env:
           XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
@@ -181,16 +191,16 @@ jobs:
           key: assets-${{ steps.pick.outputs.id }}-v1-${{ github.run_id }}
 
       - name: Этап 2 — монтаж
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material'
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         run: python pipeline/build.py jobs/${{ steps.pick.outputs.job }}.json
 
       - name: Этап 3 — комплект для YouTube
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material'
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         run: python pipeline/youtube.py jobs/${{ steps.pick.outputs.job }}.json
 
       - name: Находим готовое
         id: out
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material'
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         run: |
           set -e
           DIR=work/${{ steps.pick.outputs.id }}/out
@@ -199,7 +209,7 @@ jobs:
           ls -la "$DIR"
 
       - name: Выдаём ролик
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material'
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: final-${{ steps.pick.outputs.job }}
@@ -210,7 +220,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Комплект для выкладки отдельно
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material'
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         uses: actions/upload-artifact@v4
         with:
           name: youtube-${{ steps.pick.outputs.job }}
