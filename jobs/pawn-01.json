@@ -1,0 +1,133 @@
+{
+  "_": "Первый настоящий ролик канала. Короткий — около двух минут: это боевая проверка всего конвейера на живых ключах, а не технический тест на карточках. Канал англоязычный, поэтому весь текст ролика на английском.",
+
+  "id": "pawn-01",
+
+  "_тема": "Читается channel.py: по этим словам следующий ролик проверяется на повтор. Тема — не заголовок, а суть. Заполнять обязательно, иначе защита от повторов работает по заголовку, а заголовки можно переписать, оставив ту же тему.",
+  "topic": {
+    "slug": "why-dealers-look-at-the-back-first",
+    "keywords": ["reverse", "underside", "maker marks", "hallmarks",
+                 "seams", "tool marks", "wear patterns", "handling habit"]
+  },
+
+  "_голос": "voice_id у каждого аккаунта свой. Здесь стоит премейд-голос ElevenLabs (George — тёплая британская начитка, под тематику подходит). Если аккаунт его не отдаёт, прогон упадёт и напечатает список голосов аккаунта — оттуда взять свой и вписать сюда.",
+  "voice_id": "JBFqnCBsd6RMkjVDRZzb",
+  "voice_settings": {
+    "stability": 0.45,
+    "similarity_boost": 0.78,
+    "style": 0.12
+  },
+
+  "music": "assets/music/bed.mp3",
+  "bed_gain_db": -26.0,
+
+  "_цветокор": "Первый ролик канала — журнал пуст, поэтому запрещать нечего. Дальше channel.py сам не даст повторить этот цветокор три ролика подряд.",
+  "lut": "oak_brass",
+  "archive_lut": "archive_sepia",
+
+  "_генерация": "batch=false ОБЯЗАТЕЛЬНО для коротких прогонов. В пакетном режиме xAI вдвое дешевле, но ждать можно до суток, и job в Actions просто упрётся в свой таймаут.",
+  "batch": false,
+
+  "script_blocks": [
+    "Every professional in this trade does the same thing when they pick something up. They turn it over. Not the front, the back, and they do it before they look at anything else. Watch a dealer at a car boot sale. Watch a valuer on television. Watch an auction house specialist handling a piece for the very first time. The object goes upside down within about two seconds, every single time. So what is back there that matters more than the thing itself? The answer is simple, and once you have heard it you will never unsee it. The front of an object is what it was built to show you. The back is what it accidentally tells you. Those are two completely different kinds of information, and only one of them is honest.",
+
+    "Start with marks. A stamp, a maker's mark, a set of hallmarks, a paper label torn halfway off. This is the object's paperwork, and unlike real paperwork it is genuinely hard to fake well, because a forger has to get the shape, the depth and the wear all correct at the same time. Most of them manage one out of three. Next, look at how the thing was put together. Seams, screws, joints, the direction of the tool marks. Manufacturing methods changed decade by decade, and a piece assembled in a way that did not exist yet is telling you its real age whether it wants to or not. Then look at where it is worn. Genuine wear collects where hands and surfaces actually meet, so it is uneven and it is specific. Applied wear is spread evenly, because it was applied on purpose, by someone in a hurry.",
+
+    "Now the uncomfortable part. None of this makes you a valuer, and it is not meant to. What it does is stop you throwing out something that mattered, and stop you handing over serious money for something that did not. Those two mistakes are far more common than the lucky find, and unlike the lucky find they are entirely within your control. So the habit is simple, and it costs you nothing at all. Before you decide what a thing is worth, turn it over and give the back thirty honest seconds. Almost nobody does. That is the whole advantage."
+  ],
+
+  "_картинки": "Только общие планы, руки, интерьер, атмосфера. Ни одного конкретного предмета: под предмет идёт настоящее фото со стока или из архива, а не рисунок. Порядок промптов соответствует порядку сценария.",
+  "image_prompts": [
+    "dim antique shop interior, crowded wooden shelves, warm lamp light, shallow depth of field, cinematic, 16:9",
+    "close-up of weathered hands turning over an unidentified object, warm side light, macro, cinematic, 16:9",
+    "car boot sale table at early morning, folded cloth, soft warm haze, cinematic, 16:9",
+    "underside of a wooden surface under a desk lamp, raking light across the grain, macro, warm, cinematic, 16:9",
+    "brass magnifying glass resting on a worn workbench, warm glow, shallow focus, cinematic, 16:9",
+    "silhouette of a person examining something held up to the light, backlit, warm interior, cinematic, 16:9",
+    "close-up of worn edges on an old handle, uneven patina, warm raking light, macro, cinematic, 16:9",
+    "empty auction room before the sale, warm wood panelling, rows of chairs, cinematic, 16:9"
+  ],
+
+  "footage_queries": [
+    "antique shop interior",
+    "flea market stalls morning",
+    "hands examining antique object",
+    "auction house bidding",
+    "magnifying glass close up",
+    "old wooden workbench tools"
+  ],
+  "archive_queries": [
+    "silver hallmarks close up",
+    "antique dealer shop historic",
+    "pottery maker mark base",
+    "furniture joinery detail",
+    "auction house historic",
+    "antique clock mechanism"
+  ],
+
+  "_отбор": "Заполняется ПОСЛЕ этапа material по контактным листам. Файлы при этом не удаляются — отказ отменяется удалением номера.",
+  "reject": { "clip": [], "arch": [] },
+
+  "style_override": {
+    "_доля": "30% экранного времени — генерация, остальное сток и подлинные фото.",
+    "generated_share": 0.30,
+
+    "_сжатие": "crf 22 — замер показал, что 20 с зерном даёт 2.8 ГБ на 39 минут при лимите GitHub Releases в 2 ГБ.",
+    "crf": 22,
+
+    "_темп": "База кадра в теле ролика. У сонного исторического канала 5.4-7.2; здесь бодрее.",
+    "base_duration_range": [4.2, 5.6],
+    "deceleration_range": [1.10, 1.35],
+
+    "_вступление": "На получасовом ролике это три минуты. Здесь ролик сам двухминутный, поэтому вступление обрежется потолком в треть хронометража — так и задумано.",
+    "intro_clip_duration_range": [2, 4],
+    "intro_photo_duration_range": [3, 7],
+    "intro_clip_share": 0.6,
+    "intro_transition_duration_range": [0.35, 0.7],
+    "body_clip_every_n_shots": 4,
+
+    "transitions": [
+      "dissolve", "fade", "fadeslow", "hblur",
+      "smoothleft", "smoothright", "smoothup", "smoothdown",
+      "slideleft", "slideright", "wipeleft", "circleopen"
+    ],
+    "transition_duration_range": [0.8, 1.4],
+    "hard_cut_probability": 0.0,
+
+    "_эффекты": "Из общего набора убраны vhs_dark, prism_1 и technicolor_flash: расслоение каналов и призматическая кайма — приёмы про технику и цифру, на лавке древностей читаются как брак.",
+    "effects_enabled": true,
+    "effect_probability": 0.32,
+    "effects": [
+      "vintage_blemish",
+      "charcoal_film",
+      "sunset_2",
+      "heat_print",
+      "brass_gleam",
+      "by_the_fireplace"
+    ],
+
+    "_фактура": "grain, vignette и вариант искр движок выбирает сам от seed — они разные у каждого ролика. Задавать их здесь стоит только если конкретный ролик этого требует.",
+
+    "fps": 30
+  },
+
+  "youtube": {
+    "title": "Why Dealers Always Look at the Back First",
+    "title_alternatives": [
+      "The Thirty Seconds Most People Never Spend",
+      "What the Back of an Object Tells You"
+    ],
+    "description_intro": "Every dealer, valuer and auction specialist does the same thing in the first two seconds: they turn the object over. Here is what they are looking for, and why the back of a thing is more honest than the front.",
+    "chapters": [
+      "Everyone turns it over first",
+      "Marks, seams and honest wear",
+      "What this actually saves you"
+    ],
+    "description_notes": "This is a general guide to handling and observation, not a valuation service. Anything you think may be significant is worth showing to a qualified specialist in person.",
+    "hashtags": ["#antiques", "#auction", "#collecting"],
+    "tags": ["antiques", "auction", "collecting", "flea market",
+             "hallmarks", "makers marks", "antique valuation",
+             "car boot sale", "identifying antiques"],
+    "thumbnail_at": 74.0
+  }
+}

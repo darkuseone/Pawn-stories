@@ -137,12 +137,17 @@ def seed_from(video_id: str) -> int:
 class StyleEngine:
     """Выдаёт визуальный стиль ролика и параметры каждого кадра."""
 
-    def __init__(self, video_id: str, recent_luts=None, recent_openings=None):
+    def __init__(self, video_id: str, recent_luts=None, recent_openings=None,
+                 recent_transitions=None, recent_sparks=None):
         """
-        recent_luts / recent_openings — что использовалось в последних трёх
-        роликах канала. Эти варианты исключаются жёстко. Без этого
-        случайность иногда выдаёт три одинаковых ролика подряд, а именно
-        подряд идущие загрузки YouTube и сравнивает между собой.
+        recent_* — что использовалось в последних роликах канала. Эти
+        варианты исключаются жёстко. Без этого случайность регулярно выдаёт
+        три похожих ролика подряд, а YouTube показывает соседние загрузки
+        канала рядом и зритель видит их именно рядом.
+
+        Списки приходят из channel.py — журнала канала. Раньше их надо было
+        вписывать в спецификацию руками, и они, разумеется, оставались
+        пустыми: защита от повторов существовала только на бумаге.
         """
         self.video_id = video_id
         self.rng = random.Random(seed_from(video_id))
@@ -150,6 +155,8 @@ class StyleEngine:
 
         recent_luts = list(recent_luts or [])[-3:]
         recent_openings = list(recent_openings or [])[-2:]
+        recent_transitions = list(recent_transitions or [])[-2:]
+        recent_sparks = list(recent_sparks or [])[-2:]
 
         lut_pool = [l for l in LUTS if l not in recent_luts] or LUTS
         self.lut = r.choice(lut_pool)
@@ -198,9 +205,13 @@ class StyleEngine:
         # уже сидит в LUT через подъём чёрного, а второй слой только мылит.
         self.haze_enabled = False
 
-        # Искры — подпись канала.
-        self.sparks_enabled = True
-        self.sparks_variant = r.choice([1, 2, 3])
+        # Искры — подпись канала, но не в каждом ролике. Приём, который стоит
+        # на всех загрузках подряд, перестаёт быть подписью и становится
+        # шаблоном: именно по таким постоянным признакам канал и опознаётся
+        # как поточный. Раз в пять-шесть роликов искр нет вовсе.
+        self.sparks_enabled = r.random() > 0.17
+        spark_pool = [v for v in (1, 2, 3) if v not in recent_sparks] or [1, 2, 3]
+        self.sparks_variant = r.choice(spark_pool)
 
         # Скорость задаётся В ПИКСЕЛЯХ В СЕКУНДУ и печётся прямо в петлю.
         # Так её видно и можно проверить линейкой, а не через множитель
@@ -227,9 +238,13 @@ class StyleEngine:
         # Плотность: к финалу кадры длиннее. Ролик «успокаивается».
         self.decel = r.uniform(1.15, 1.55)
 
-        # Основной переход ролика + запасные для разнообразия.
+        # Основной переход ролика + запасные для разнообразия. Основной
+        # звучит в 72% склеек, поэтому именно он задаёт «почерк» монтажа и
+        # именно его нельзя повторять от ролика к ролику.
         self.transitions = list(TRANSITIONS)
-        self.main_tr = r.choice(self.transitions)
+        tr_pool = [t for t in self.transitions
+                   if t not in recent_transitions] or self.transitions
+        self.main_tr = r.choice(tr_pool)
         # Длительность перехода: диапазон, а не три фиксированных значения —
         # так её можно двигать из спецификации ролика одной строкой.
         self.tr_dur_range = (1.0, 1.8)
@@ -239,8 +254,12 @@ class StyleEngine:
 
         # Вступление. Куски короткие: длинный стоковый клип в начале ролика
         # выключают так же охотно, как статичную картинку.
-        # Три минуты — столько держится быстрая перебивка на этом канале.
-        self.intro_footage_seconds = 180.0
+        # Около трёх минут — столько держится быстрая перебивка на этом
+        # канале. Именно ОКОЛО: длина вступления выпадает из диапазона, а не
+        # стоит ровно на 180 у всех роликов. Одинаковая до секунды точка,
+        # где ролик переключает темп, — признак поточной сборки, заметный
+        # даже без сравнения роликов между собой.
+        self.intro_footage_seconds = round(r.uniform(150.0, 215.0), 1)
         self.intro_clip_duration_range = (2.0, 4.0)     # видео
         self.intro_photo_duration_range = (3.0, 7.0)    # фотография
         self.intro_clip_share = 0.6                     # доля видео в перебивке
@@ -253,10 +272,26 @@ class StyleEngine:
         self.effects = list(EFFECTS)
         self.effect_probability = 0.32
 
-        # Тип открытия: как выглядят первые секунды.
-        open_pool = [o for o in ("long_footage", "quick_cuts", "black_card")
-                     if o not in recent_openings] or ["long_footage", "quick_cuts", "black_card"]
+        # Тип открытия: как выглядят первые секунды. Самая заметная зрителю
+        # ось разнообразия — первые пять секунд решают, останется он или нет,
+        # и одинаковое начало у всех роликов канала бросается в глаза быстрее
+        # всего остального.
+        #
+        # РАНЬШЕ ЭТО ПОЛЕ НИ НА ЧТО НЕ ВЛИЯЛО. Оно вычислялось, защищалось от
+        # повторов, печаталось в сводку — и нигде не использовалось: все
+        # ролики открывались одинаково. Теперь варианты разведены в build.py:
+        #
+        #   quick_cuts    сразу очередь самых коротких кусков, без разгона
+        #   long_footage  один длинный establishing-кадр, потом перебивка
+        #   black_card    открытие из чёрного, кадр проявляется
+        OPENINGS = ("long_footage", "quick_cuts", "black_card")
+        open_pool = [o for o in OPENINGS if o not in recent_openings] or list(OPENINGS)
         self.opening = r.choice(open_pool)
+
+        # Раскладка превью. YouTube показывает превью соседних загрузок в
+        # одном ряду, поэтому одинаковая вёрстка подписи опознаётся как
+        # серия быстрее, чем любой признак внутри самого ролика.
+        self.thumb_style = r.choice(["lower_left", "lower_band", "upper_left"])
 
         self._last_move = None
         self._used_frames = {}
@@ -359,6 +394,7 @@ class StyleEngine:
             "main_transition": self.main_tr,
             "transition_duration": self.tr_dur,
             "opening": self.opening,
+            "thumb_style": self.thumb_style,
         }
 
 

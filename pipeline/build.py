@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import channel
 import render
 import style as style_mod
 from render import W, H, FPS
@@ -302,6 +303,7 @@ def plan_shots(marks, st, assets, total, job_reject=None):
 
     # --- вступление ---
     t = marks[0]["start"] if marks else 0.0
+    intro_start = t
     run_kind, run_len = None, 0
     while t < intro_end:
         # чередуем видео и фото, но не даём трём одинаковым идти подряд
@@ -315,6 +317,20 @@ def plan_shots(marks, st, assets, total, job_reject=None):
         rng_pair = (st.intro_clip_duration_range if kind == "clip"
                     else st.intro_photo_duration_range)
         dur = round(st.rng.uniform(*rng_pair), 3)
+
+        # ТИП ОТКРЫТИЯ. Первые секунды решают, останется зритель или нет, и
+        # именно они у всех роликов канала были одинаковыми: поле opening
+        # вычислялось, но нигде не применялось. Три варианта расходятся
+        # только длительностями первых кадров и проявлением из чёрного —
+        # таймлайн при этом не сдвигается ни на кадр, поэтому звук остаётся
+        # на месте (сдвиг здесь стоил бы рассинхрона на весь ролик).
+        if idx == 0 and st.opening == "long_footage":
+            # один установочный кадр, потом перебивка — «выдох» перед бегом
+            dur = round(st.rng.uniform(5.5, 8.5), 3)
+        elif st.opening == "quick_cuts" and t < intro_start + 14.0:
+            # первые четырнадцать секунд — самый короткий возможный шаг
+            lo = rng_pair[0]
+            dur = round(min(dur, lo + (rng_pair[1] - lo) * 0.3), 3)
         tr = st.rng.choice(st.transitions)
         # переход во вступлении короткий: длинное растворение съедает
         # весь смысл быстрой перебивки
@@ -701,7 +717,7 @@ def film_look():
     )
 
 
-def join(group, out: Path, st, sparks):
+def join(group, out: Path, st, sparks, first=False):
     ins = " ".join(f'-i "{c["file"]}"' for c in group)
     if sparks is not None:
         ins += f' -stream_loop -1 -i "{sparks}"'
@@ -749,6 +765,11 @@ def join(group, out: Path, st, sparks):
         post.append(f"noise=alls={st.grain}:allf=t+u")
     if st.vignette:
         post.append(f"vignette=PI/{st.vignette:.2f}")
+    # Открытие из чёрного. Стоит ПОСЛЕ цветокора и зерна, иначе чёрное
+    # перестаёт быть чёрным: LUT поднимает нулевой уровень до 0.05, и
+    # проявление идёт не из черноты, а из коричневой мути.
+    if first and st.opening == "black_card":
+        post.append("fade=t=in:st=0:d=1.4")
     post.append("setsar=1")
     fc.append(f'[{last}]' + ",".join(post) + '[out]')
 
@@ -791,9 +812,24 @@ def main(job_path):
     for d in (tmp, out):
         d.mkdir(parents=True, exist_ok=True)
 
-    st = style_mod.StyleEngine(job["id"],
-                               recent_luts=job.get("recent_luts"),
-                               recent_openings=job.get("recent_openings"))
+    # Чего не брать — из журнала канала, а не из спецификации. Поля
+    # recent_luts / recent_openings в спецификации остаются как ручное
+    # переопределение, но пустыми они больше не значат «повторяй что хочешь»:
+    # раньше их надо было заполнять руками, и они, разумеется, всегда были
+    # пустыми — защита от повторов существовала только на бумаге.
+    av = channel.avoid()
+    if any(av.values()):
+        log("── журнал канала: не повторяю " +
+            ", ".join(f"{k}={v}" for k, v in av.items() if v))
+    for problem in channel.check(job):
+        log(f"  ! {problem}")
+
+    st = style_mod.StyleEngine(
+        job["id"],
+        recent_luts=job.get("recent_luts") or av["lut"],
+        recent_openings=job.get("recent_openings") or av["opening"],
+        recent_transitions=av["main_transition"],
+        recent_sparks=av["sparks"])
     # Цветокор можно задать и на верхнем уровне спецификации, и внутри
     # style_override. Раньше верхний уровень читался только для archive_lut,
     # а lut рядом с ним молча игнорировался — и ролик, в спецификации
@@ -811,6 +847,13 @@ def main(job_path):
     # а с заглушенным stderr — вообще никак.
     check_luts(st)
     log("стиль:", json.dumps(st.summary(), ensure_ascii=False))
+    # Карточка стиля кладётся рядом с роликом: из неё channel.py потом
+    # запишет ролик в журнал. Записывается ПОСЛЕ выкладки отдельной командой,
+    # а не здесь: пересобранный десять раз ролик не должен десять раз
+    # выталкивать из списка недавних настоящие.
+    (out / "style.json").write_text(
+        json.dumps(st.summary(), ensure_ascii=False, indent=1),
+        encoding="utf-8")
 
     marks = json.loads((assets / "marks.json").read_text())
     total = json.loads((assets / "state.json").read_text())["total_audio"]
@@ -852,7 +895,7 @@ def main(job_path):
         group = shots[gi:gi + SEG_SIZE]
         seg = tmp / f"seg_{gi//SEG_SIZE:03d}.mp4"
         if not seg.exists():
-            join(group, seg, st, sparks)
+            join(group, seg, st, sparks, first=(gi == 0))
         segs.append(seg)
         log(f"  группа {gi//SEG_SIZE + 1}/{math.ceil(len(shots)/SEG_SIZE)}")
 

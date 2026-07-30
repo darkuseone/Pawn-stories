@@ -106,9 +106,10 @@ def chapters(job, cues):
     return out
 
 
-# Подписи в описании. Канал русскоязычный, поэтому и умолчания русские;
-# английский ролик переопределяет их полем description_labels, не трогая код.
-LABELS = {"chapters": "Главы", "runtime": "Хронометраж"}
+# Подписи в описании. Канал англоязычный, поэтому и умолчания английские;
+# ролик на другом языке переопределяет их полем description_labels в
+# спецификации, не трогая код.
+LABELS = {"chapters": "Chapters", "runtime": "Runtime"}
 
 
 def description(job, chaps, total):
@@ -124,40 +125,74 @@ def description(job, chaps, total):
     return "\n".join(parts)
 
 
-def thumbnail(video: Path, out: Path, at: float, title: str):
-    """Кадр из самого ролика плюс заголовок. Ничего дорисованного."""
+def thumbnail(video: Path, out: Path, at: float, title: str, style="lower_left"):
+    """
+    Кадр из самого ролика плюс заголовок. Ничего дорисованного.
+
+    РАСКЛАДКА МЕНЯЕТСЯ ОТ РОЛИКА К РОЛИКУ. YouTube показывает превью соседних
+    загрузок канала в одном ряду, и одинаковая вёрстка подписи опознаётся как
+    поточная серия быстрее, чем любой признак внутри самого ролика. Вариант
+    выбирает движок стиля по seed, то есть он свой у каждого ролика и при
+    этом воспроизводимый.
+
+      lower_left   подпись внизу слева, затемнение снизу  — крупно, спокойно
+      lower_band   подпись в плашке во всю ширину внизу   — плотно, «газета»
+      upper_left   подпись сверху слева, затемнение сверху — под кадры,
+                   где главное в нижней половине
+    """
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
     raw = out.parent / "_thumb_raw.png"
     subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{at:.2f}", "-i", str(video),
                     "-frames:v", "1", "-y", str(raw)], check=True)
 
     im = Image.open(raw).convert("RGB").resize((W_THUMB, H_THUMB), Image.LANCZOS)
+    top = style == "upper_left"
 
-    # затемняем низ, чтобы текст читался на любой картинке
-    shade = Image.new("L", (W_THUMB, H_THUMB), 0)
-    sd = ImageDraw.Draw(shade)
-    for i in range(H_THUMB // 2, H_THUMB):
-        k = (i - H_THUMB // 2) / (H_THUMB / 2)
-        sd.line([(0, i), (W_THUMB, i)], fill=int(215 * k ** 1.4))
-    im = Image.composite(Image.new("RGB", im.size, (0, 0, 0)), im,
-                         shade.filter(ImageFilter.GaussianBlur(8)))
+    if style == "lower_band":
+        # плашка: сплошная полоса, текст на ней всегда читается независимо
+        # от того, что попало в кадр
+        band = Image.new("RGB", im.size, (0, 0, 0))
+        mask = Image.new("L", im.size, 0)
+        ImageDraw.Draw(mask).rectangle([0, H_THUMB - 210, W_THUMB, H_THUMB],
+                                       fill=205)
+        im = Image.composite(band, im, mask.filter(ImageFilter.GaussianBlur(2)))
+    else:
+        # градиент от края: мягче, но зависит от содержимого кадра
+        shade = Image.new("L", (W_THUMB, H_THUMB), 0)
+        sd = ImageDraw.Draw(shade)
+        half = H_THUMB // 2
+        for i in range(half):
+            k = i / half
+            y = half - 1 - i if top else half + i
+            sd.line([(0, y), (W_THUMB, y)], fill=int(215 * k ** 1.4))
+        im = Image.composite(Image.new("RGB", im.size, (0, 0, 0)), im,
+                             shade.filter(ImageFilter.GaussianBlur(8)))
 
     d = ImageDraw.Draw(im)
-    words, lines, cur = title.split(), [], ""
-    font = ImageFont.truetype(FONT_BOLD, 62)
-    for w in words:
+    size = 54 if style == "lower_band" else 62
+    font = ImageFont.truetype(FONT_BOLD, size)
+    step = size + 12
+    margin = 46 if style == "lower_band" else 60
+
+    lines, cur = [], ""
+    for w in title.split():
         probe = (cur + " " + w).strip()
-        if d.textlength(probe, font=font) > W_THUMB - 120 and cur:
+        if d.textlength(probe, font=font) > W_THUMB - margin * 2 and cur:
             lines.append(cur)
             cur = w
         else:
             cur = probe
     lines.append(cur)
 
-    y = H_THUMB - 56 - len(lines) * 74
+    if top:
+        y = 52
+    elif style == "lower_band":
+        y = H_THUMB - 40 - len(lines) * step
+    else:
+        y = H_THUMB - 56 - len(lines) * step
     for ln in lines:
-        d.text((60, y), ln, font=font, fill=(240, 238, 232))
-        y += 74
+        d.text((margin, y), ln, font=font, fill=(240, 238, 232))
+        y += step
 
     im.save(out, quality=92)
     raw.unlink(missing_ok=True)
@@ -203,7 +238,16 @@ def main(job_path):
     if not 0 <= at < total:
         at = total * 0.35
         log(f"  thumbnail_at за пределами ролика, беру {at:.0f} сек")
-    thumb = thumbnail(video, out / "thumbnail.jpg", at, y["title"])
+    # Раскладку превью выбрал движок стиля при сборке — берём её оттуда,
+    # чтобы не бросать жребий второй раз и не получить у одного ролика
+    # разные превью при перезапуске этого шага.
+    style_card = out / "style.json"
+    thumb_style = "lower_left"
+    if style_card.exists():
+        thumb_style = json.loads(style_card.read_text(encoding="utf-8")).get(
+            "thumb_style", thumb_style)
+    thumb = thumbnail(video, out / "thumbnail.jpg", at, y["title"], thumb_style)
+    log(f"превью : раскладка {thumb_style}")
 
     log(f"главы  : {len(chaps)}, первая с 00:00, последняя с {stamp(chaps[-1][0])}")
     log(f"теги   : {len(tags)} символов из {TAGS_LIMIT}")

@@ -60,7 +60,13 @@ def tts_block(text, out_mp3: Path, voice_id, api_key, stability=0.42,
         # квота, чужой voice_id, блокировка облачного IP на бесплатном тарифе.
         # raise_for_status тело выбрасывает, и в логе остаётся голое
         # «401 Unauthorized» без единой подсказки, что чинить.
-        raise RuntimeError(f"ElevenLabs {r.status_code}: {r.text[:500]}")
+        msg = f"ElevenLabs {r.status_code}: {r.text[:500]}"
+        # Самая частая причина — не тот voice_id: он у каждого аккаунта свой,
+        # и чужой идентификатор из чужой спецификации не работает. Гадать по
+        # коду ответа не нужно, список голосов аккаунта отдаётся тем же ключом.
+        if "voice" in r.text.lower() or r.status_code in (400, 404):
+            msg += "\n" + available_voices(api_key)
+        raise RuntimeError(msg)
     data = r.json()
     import base64
     out_mp3.write_bytes(base64.b64decode(data["audio_base64"]))
@@ -70,6 +76,31 @@ def tts_block(text, out_mp3: Path, voice_id, api_key, stability=0.42,
         "starts": al.get("character_start_times_seconds", []),
         "ends": al.get("character_end_times_seconds", []),
     }
+
+
+def available_voices(api_key, limit=25):
+    """
+    Список голосов аккаунта — для сообщения об ошибке.
+
+    voice_id у каждого аккаунта свой: идентификатор, скопированный из чужой
+    спецификации или из статьи, не работает. Без этого списка отказ выглядит
+    как «422 Unprocessable Entity» и не подсказывает ничего.
+
+    Сама по себе никогда не роняет прогон: это диагностика, а не проверка.
+    """
+    try:
+        r = requests.get("https://api.elevenlabs.io/v1/voices", timeout=30,
+                         headers={"xi-api-key": api_key})
+        if r.status_code != 200:
+            return f"(список голосов получить не вышло: {r.status_code})"
+        rows = [f"  {v.get('voice_id')}  {v.get('name')}"
+                for v in r.json().get("voices", [])[:limit]]
+        if not rows:
+            return "(в аккаунте нет ни одного голоса)"
+        return ("Голоса этого аккаунта — впиши нужный в поле voice_id "
+                "спецификации:\n" + "\n".join(rows))
+    except Exception as e:
+        return f"(список голосов получить не вышло: {e})"
 
 
 def sentence_marks(text, align, offset):
