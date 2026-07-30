@@ -60,6 +60,7 @@ jobs:
         env:
           XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
           PEXELS_API_KEY:     ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY:    ${{ secrets.PIXABAY_API_KEY }}
           # Только факт наличия, не значения: Variables в логах НЕ маскируются.
@@ -76,12 +77,12 @@ jobs:
           case "${{ steps.pick.outputs.stage }}" in
             material) need="" ; want="PEXELS_API_KEY PIXABAY_API_KEY" ;;
             render)   need="" ; want="" ;;
-            *)        need="XAI_API_KEY ELEVENLABS_API_KEY PEXELS_API_KEY PIXABAY_API_KEY" ; want="" ;;
+            *)        need="XAI_API_KEY ELEVENLABS_API_KEY PEXELS_API_KEY PIXABAY_API_KEY" ; want="ELEVENLABS_VOICE_ID" ;;
           esac
           for k in $want; do
             eval "v=\$$k"
             if [ -z "$v" ]; then
-              echo "нет:   $k — стокового видео не будет, архивные фото соберутся"
+              echo "нет:   $k — будет взято поле voice_id из спецификации ролика"
             else
               echo "есть:  $k"
             fi
@@ -117,6 +118,8 @@ jobs:
         env:
           PEXELS_API_KEY:  ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          # Отбраковка на этом этапе тоже смотрит зрением, ключ ей нужен.
+          XAI_API_KEY:     ${{ secrets.XAI_API_KEY }}
         run: |
           set -e
           python pipeline/assets.py jobs/${{ steps.pick.outputs.job }}.json material
@@ -162,6 +165,9 @@ jobs:
         env:
           XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          # Голос канала. Без этой строки секрет есть в репозитории, но до
+          # процесса не доходит, и озвучка падает на «не задан голос».
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
           PEXELS_API_KEY:     ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY:    ${{ secrets.PIXABAY_API_KEY }}
         run: python pipeline/assets.py jobs/${{ steps.pick.outputs.job }}.json

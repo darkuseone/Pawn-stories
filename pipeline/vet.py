@@ -52,8 +52,29 @@ PROBE_W = 512          # кадр под проверку: больше моде
 WORKERS = 6            # запросов к зрению одновременно
 VET_TIMEOUT = 60
 
+# Цена зрения, долларов за миллион токенов. ЭТО ПРЕДПОЛОЖЕНИЕ, не факт:
+# прайс xAI живёт своей жизнью и его надо сверить. Числа нужны только для
+# оценки в логе — реальный расход токенов конвейер СЧИТАЕТ по ответам API
+# и печатает отдельно, так что при неверной цене врёт только строка с
+# долларами, а не количество токенов.
+PRICE_IN_PER_M = 2.0
+PRICE_OUT_PER_M = 10.0
+
+# Источники, которым верим без зрения. Замер по первому прогону pawn-01,
+# 40 архивных фото: Met Museum дал почти весь годный материал — это музей
+# предметов, и по предметному запросу он отдаёт предметы. Library of
+# Congress по тем же запросам отдавал обложки книг и обмеры зданий, поэтому
+# в этот список он не входит и проверяется зрением.
+TRUSTED_SOURCES = ("met",)
+
 # Пороги дешёвого прохода. Подобраны по разбору первого прогона pawn-01.
-PALE_LIMIT = 0.55      # доля почти белого, выше которой кадр — каталог на белом
+#
+# У белизны ДВА порога, и это главное в двухъярусной схеме. Выше HARD —
+# кадр отбраковывается на месте, бесплатно. Между SOFT и HARD — случай
+# непонятный: каталожное фото предмета на светлом фоне бывает и лучшим, что
+# есть по теме. Такие уходят к зрению, а не в мусор.
+PALE_HARD = 0.62       # столько белого — это каталожная карточка, а не кадр
+PALE_SOFT = 0.38       # отсюда начинается «непонятно», решает зрение
 DARK_MEAN = 16         # средняя яркость, ниже которой кадр просто чёрный
 MIN_PIXELS = 640 * 360
 STATIC_DELTA = 1.6     # средняя разница кадров видео, ниже — стоп-кадр
@@ -101,7 +122,7 @@ def cheap_problems(path: Path):
     if path.suffix.lower() in (".mp4", ".m4v"):
         frames = video_frames(path)
         if not frames:
-            return None, ["файл не открылся"]
+            return None, ["файл не открылся"], 0.0
         im = frames[len(frames) // 2]
         # Статичное «видео». Сток иногда отдаёт кадр, растянутый на десять
         # секунд: формально это видео, на экране — фотография без движения,
@@ -117,7 +138,7 @@ def cheap_problems(path: Path):
         try:
             im = Image.open(path).convert("RGB")
         except Exception as e:
-            return None, [f"файл не открылся: {e}"]
+            return None, [f"файл не открылся: {e}"], 0.0
 
     w, h = im.size
     if w * h < MIN_PIXELS:
@@ -127,12 +148,12 @@ def cheap_problems(path: Path):
     px = list(small.getdata())
     pale = sum(1 for p in px if p > 224) / len(px)
     mean = sum(px) / len(px)
-    if pale > PALE_LIMIT:
+    if pale > PALE_HARD:
         bad.append(f"почти белый кадр ({pale*100:.0f}% площади)")
     if mean < DARK_MEAN:
         bad.append(f"кадр практически чёрный (яркость {mean:.0f})")
 
-    return im, bad
+    return im, bad, pale
 
 
 # ─────────────────────── ЗРЕНИЕ ───────────────────────
@@ -198,20 +219,24 @@ def ask_vision(im: Image.Image, topic: str, description: str, model: str,
                 if attempt + 1 < tries and r.status_code in (429, 500, 502, 503):
                     time.sleep(2 * (attempt + 1))
                     continue
-                return None, f"зрение ответило {r.status_code}: {r.text[:120]}"
+                return None, f"зрение ответило {r.status_code}: {r.text[:120]}", (0, 0)
             txt = r.json()["choices"][0]["message"]["content"].strip()
             # модель иногда оборачивает JSON в ```json ... ```
             if txt.startswith("```"):
                 txt = txt.strip("`").split("\n", 1)[-1].rsplit("```", 1)[0]
             data = json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
-            return bool(data.get("keep", True)), str(
-                data.get("what") or data.get("why") or "")[:70]
+            u = r.json().get("usage") or {}
+            used = (int(u.get("prompt_tokens") or 0),
+                    int(u.get("completion_tokens") or 0))
+            return (bool(data.get("keep", True)),
+                    str(data.get("what") or data.get("why") or "")[:70],
+                    used)
         except Exception as e:
             if attempt + 1 < tries:
                 time.sleep(1.5)
                 continue
             return None, f"зрение не ответило: {e}"
-    return None, "зрение не ответило"
+    return None, "зрение не ответило", (0, 0)
 
 
 # ─────────────────────── ГЛАВНОЕ ───────────────────────
@@ -230,64 +255,162 @@ def topic_text(job):
             f"More context: {desc}" if desc else "")
 
 
+def manifest_meta(work: Path):
+    """Источник и запрос каждого файла — из манифестов скачивания."""
+    meta = {}
+    for folder in ("footage", "archive"):
+        man = work / folder / "_manifest.json"
+        if not man.exists():
+            continue
+        try:
+            rows = json.loads(man.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        for row in rows:
+            name = Path(row.get("file", "")).name
+            if name:
+                meta[name] = (row.get("src", ""), row.get("q", ""))
+    return meta
+
+
+def words(text: str):
+    import re as _re
+    stop = {"the", "a", "an", "of", "and", "or", "in", "on", "at", "to", "for",
+            "with", "from", "closeup", "close", "historic", "old"}
+    return {w for w in _re.findall(r"[a-zA-Z]+", (text or "").lower())
+            if len(w) > 2 and w not in stop}
+
+
+def triage(path: Path, im, bad, pale, src, query, current_queries, trusted):
+    """
+    ПЕРВЫЙ ЯРУС. Решает бесплатно всё, что можно решить бесплатно, и
+    честно говорит «не знаю» там, где нужен взгляд.
+
+    Возвращает "reject" | "keep" | "ask" и причину.
+
+    Смысл ярусов в деньгах. Зрение стоит за каждый кадр, и платить за
+    очевидное незачем: белый прямоугольник, чёрный кадр и стоп-кадр вместо
+    видео видно арифметикой. Ровно так же незачем платить за то, что и так
+    заведомо по теме: музейный предмет из Met по предметному запросу и
+    собственная генерация по собственному промпту.
+
+    Зрению достаётся середина — то, про что локальные признаки молчат.
+    Именно там и живут бананы по запросу про лампу.
+    """
+    if bad:
+        return "reject", "; ".join(bad)
+
+    # собственная генерация: она нарисована по нашему же промпту
+    if path.name.startswith("img_"):
+        return "keep", "сгенерировано по промпту ролика"
+
+    # Запрос, которого в спецификации больше нет, — это материал, оставшийся
+    # в кэше от прошлой версии ролика. Он не обязательно плох, но и по теме
+    # уже не гарантирован, поэтому идёт к зрению, а НЕ в отказ.
+    #
+    # Отбраковывать здесь по пересечению слов запроса с темой нельзя, и это
+    # проверено: запросы пишутся под ролик и заведомо по теме, но написаны
+    # они другими словами. «hands examining antique object» не пересекается
+    # с ключевыми словами темы ни одним словом — и правило, которое казалось
+    # разумным, забраковало на тесте весь годный материал разом.
+    if current_queries and query and query not in current_queries:
+        return "ask", f"запрос «{query}» не из текущей спецификации"
+
+    # доверенный источник — смотреть незачем
+    if src in trusted:
+        return "keep", f"{src}: предметный источник, отдаёт предметы"
+
+    if pale >= PALE_SOFT:
+        return "ask", f"светлый фон {pale*100:.0f}% — нужен взгляд"
+    return "ask", "локальные признаки молчат"
+
+
 def vet_all(job, work: Path, use_vision=True):
     topic, desc = topic_text(job)
     model = job.get("vet_model", DEFAULT_VET_MODEL)
     key = (os.environ.get("XAI_API_KEY") or "").strip()
+    trusted = tuple(job.get("trusted_sources", TRUSTED_SOURCES))
+    current_queries = set(job.get("footage_queries", []) +
+                          job.get("archive_queries", []))
 
+    meta = manifest_meta(work)
     groups = {"clip": sorted((work / "footage").glob("clip_*")),
               "arch": sorted((work / "archive").glob("arch_*"))}
 
     verdicts = {"clip": {}, "arch": {}}
+    tok_in = tok_out = asked = 0
     vision_ok = use_vision and bool(key)
     if use_vision and not key:
-        log("  ! нет XAI_API_KEY — зрение выключено, останется дешёвый проход")
+        log("  ! нет XAI_API_KEY — зрение выключено, работает только "
+            "локальный ярус")
 
     for kind, files in groups.items():
         if not files:
             continue
         log(f"── проверяю {kind}: {len(files)} шт")
 
-        # первый проход: дёшево и локально
-        frames, cheap_out = {}, {}
+        decided, ask_list, frames = {}, [], {}
         for f in files:
-            im, bad = cheap_problems(f)
+            im, bad, pale = cheap_problems(f)
             frames[f] = im
-            cheap_out[f] = bad
+            src, query = meta.get(f.name, ("", ""))
+            verdict, why = triage(f, im, bad, pale, src, query,
+                                  current_queries, trusted)
+            if verdict == "ask" and im is not None:
+                ask_list.append((f, why))
+            else:
+                decided[f] = (verdict == "keep", why)
 
-        # второй проход: зрение, только для тех, кто пережил первый
-        survivors = [f for f in files if not cheap_out[f] and frames[f]]
+        log(f"   первый ярус решил {len(decided)} бесплатно, "
+            f"зрению осталось {len(ask_list)}")
+
         vision_out = {}
-        if vision_ok and survivors:
-            def one(f):
+        if vision_ok and ask_list:
+            def one(item):
+                f, _why = item
                 return f, ask_vision(frames[f], topic, desc, model, key)
             with ThreadPoolExecutor(max_workers=WORKERS) as ex:
-                for f, res in ex.map(one, survivors):
+                for f, res in ex.map(one, ask_list):
                     vision_out[f] = res
+                    tok_in += res[2][0]
+                    tok_out += res[2][1]
+                    asked += 1
             unknown = sum(1 for v in vision_out.values() if v[0] is None)
-            if unknown == len(survivors):
+            if unknown == len(ask_list):
                 log(f"  ! зрение не ответило ни разу "
                     f"({list(vision_out.values())[0][1]}) — "
-                    f"оставляю всё, что прошло дешёвый проход")
+                    f"спорное оставляю в работе")
+        elif ask_list:
+            log("   зрение недоступно — спорное оставляю в работе")
 
         kept = 0
         for f in files:
             n = index_of(f)
-            if cheap_out[f]:
-                verdicts[kind][str(n)] = {"keep": False,
-                                          "why": "; ".join(cheap_out[f])}
-                continue
-            keep, why = vision_out.get(f, (None, "не проверялось зрением"))
-            if keep is None:
-                keep = True                 # непонятный ответ — не отбраковка
+            if f in decided:
+                keep, why = decided[f]
+            else:
+                keep, why, _ = vision_out.get(
+                    f, (True, "зрение не спрашивалось", (0, 0)))
+                if keep is None:
+                    keep, why = True, f"неясный ответ зрения: {why}"
             verdicts[kind][str(n)] = {"keep": bool(keep), "why": why}
             kept += bool(keep)
 
-        dropped = len(files) - kept
-        log(f"   годных {kept}, отбраковано {dropped}")
+        log(f"   годных {kept}, отбраковано {len(files) - kept}")
         for n, v in sorted(verdicts[kind].items(), key=lambda x: int(x[0])):
             if not v["keep"]:
                 log(f"     {kind} {int(n):03d}: {v['why']}")
+
+    if asked:
+        cost = tok_in / 1e6 * PRICE_IN_PER_M + tok_out / 1e6 * PRICE_OUT_PER_M
+        log(f"── зрение: {asked} кадров, "
+            f"{tok_in} входных и {tok_out} выходных токенов")
+        log(f"   это примерно ${cost:.3f} за ролик "
+            f"(${cost/asked*1000:.2f} за тысячу кадров). "
+            f"Цена взята из PRICE_IN_PER_M/PRICE_OUT_PER_M в vet.py — "
+            f"сверить с прайсом xAI, токены посчитаны по ответам API.")
+    else:
+        log("── зрение не понадобилось: всё решил первый ярус")
 
     out = work / "vetted.json"
     out.write_text(json.dumps(verdicts, indent=1, ensure_ascii=False),
