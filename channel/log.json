@@ -1,5 +1,31 @@
 {
  "channel": "pawn-stories",
  "_": "Журнал канала. Ведётся pipeline/channel.py, правится руками без опаски — это просто список. Ролик дописывается ПОСЛЕ выкладки: python pipeline/channel.py record jobs/<ролик>.json. Из этого списка движок стиля берёт, чего не повторять.",
- "aired": []
+ "aired": [
+  {
+   "id": "pawn-01",
+   "date": "2026-07-30",
+   "topic": "why-dealers-look-at-the-back-first",
+   "keywords": [
+    "reverse",
+    "underside",
+    "maker marks",
+    "hallmarks",
+    "seams",
+    "tool marks",
+    "wear patterns",
+    "handling habit"
+   ],
+   "title": "Why Dealers Always Look at the Back First",
+   "lut": "oak_brass",
+   "archive_lut": "archive_sepia",
+   "opening": "long_footage",
+   "main_transition": "smoothright",
+   "sparks": null,
+   "intro_seconds": 188.9,
+   "base_duration": 4.2,
+   "generated_share": 0.3,
+   "thumb_style": "lower_band"
+  }
+ ]
 }

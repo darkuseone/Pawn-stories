@@ -20,6 +20,9 @@ from pathlib import Path
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).parent))
+import vet
+
 UA = {"User-Agent": "sleep-docs-pipeline/1.0 (educational video project)"}
 TIMEOUT = 60
 
@@ -136,12 +139,17 @@ def build_voice(job, work: Path):
     # Голос принадлежит КАНАЛУ, а не репозиторию. Читается из спецификации
     # ролика; секрет остаётся запасным путём, чтобы старые спецификации без
     # поля voice_id продолжали работать.
-    voice = (job.get("voice_id")
-             or os.environ.get("ELEVENLABS_VOICE_ID", "")).strip()
+    # Голос берётся из секрета ELEVENLABS_VOICE_ID: он один на канал и
+    # лежит там же, где ключи. Поле voice_id в спецификации осталось
+    # переопределением на случай, когда конкретному ролику нужен другой
+    # голос, но пустым оно теперь НЕ значит «нет голоса».
+    voice = (os.environ.get("ELEVENLABS_VOICE_ID", "")
+             or job.get("voice_id", "")).strip()
     if not voice:
         raise SystemExit(
-            "не задан голос: поле voice_id в спецификации ролика "
-            "или секрет ELEVENLABS_VOICE_ID")
+            "не задан голос: секрет ELEVENLABS_VOICE_ID в Settings -> "
+            "Secrets and variables -> Actions, либо поле voice_id в "
+            "спецификации ролика")
     vs = job.get("voice_settings", {})
     adir = work / "voice"
     adir.mkdir(parents=True, exist_ok=True)
@@ -600,7 +608,9 @@ def gather(queries, per_query, sources, out: Path, kind, budget=GATHER_BUDGET):
                 ext = ".mp4" if it["kind"] == "video" else ".jpg"
                 dst = out / f"{kind}_{n:03d}_{it['src']}{ext}"
                 if fetch(it["url"], dst):
-                    got.append({"file": str(dst), **it})
+                    # запрос сохраняется рядом с файлом: по нему build.py потом
+                    # подбирает кадр под то, что звучит в эту секунду
+                    got.append({"file": str(dst), "q": q, **it})
                     log(f"  {kind} {n:03d}: {it['src']}  «{q}»")
                     n += 1
             if time.time() > deadline:
@@ -722,11 +732,109 @@ def fetch_material(job, work: Path):
     """
     vids = sources_from(job, "video_sources", VIDEO_SOURCES)
     phot = sources_from(job, "photo_sources", PHOTO_SOURCES)
-    log("── футажи (" + ", ".join(f.__name__[4:] for f in vids) + ")")
-    gather(job["footage_queries"], 3, vids, work / "footage", "clip")
+    # ЗАПАС 40%. Робот отбраковывает материал сам (vet.py), и часть подборки
+    # заведомо уйдёт в брак — на первом прогоне ушло две трети стока. Качать
+    # ровно столько, сколько нужно ролику, значит остаться без материала уже
+    # после отбраковки. Перебор ничего не стоит: лишнее просто не попадёт в
+    # монтаж, а нехватка означает повторный прогон.
+    over = float(job.get("material_overshoot", 1.4))
+    log("── футажи (" + ", ".join(f.__name__[4:] for f in vids) +
+        f", запас x{over:g})")
+    gather(job["footage_queries"], max(1, round(3 * over)), vids,
+           work / "footage", "clip")
     log("── реальные фото из архивов (" +
         ", ".join(f.__name__[4:] for f in phot) + ")")
-    gather(job["archive_queries"], 4, phot, work / "archive", "arch")
+    gather(job["archive_queries"], max(1, round(4 * over)), phot,
+           work / "archive", "arch")
+
+
+def fill_gaps(job, work: Path, total: float, model, key):
+    """
+    Добирает генерацией то, чего не нашлось в архивах и на стоках.
+
+    Робот отбраковывает материал сам, и после отбраковки реального может не
+    хватить на ролик. Раньше в этом случае MaterialMix просто уходил за
+    заданную долю генерации и писал предупреждение — то есть дырку затыкал
+    повтор одной и той же картинки по третьему разу.
+
+    Теперь дырка закрывается новыми кадрами. Доля генерации при этом всё
+    равно поднимается выше заказанной — но это честнее повтора: зритель
+    видит разное, а не одно и то же трижды.
+
+    ВИДЕО НЕ ГЕНЕРИРУЕТСЯ. Оно дорогое, и на этом канале не нужно: нехватку
+    футажа закрывает фотография с движением камеры, которую от плавного
+    стокового кадра на общем плане не отличить.
+    """
+    rej = vet.rejected_from(work)
+    def usable(folder, pat, kind):
+        out = 0
+        for p in (work / folder).glob(pat):
+            try:
+                n = int(p.name.split("_")[1])
+            except (IndexError, ValueError):
+                continue
+            if n not in set(rej.get(kind, [])):
+                out += 1
+        return out
+
+    real = usable("archive", "arch_*", "arch") + usable("footage", "clip_*", "clip")
+    have_gen = len(list((work / "images").glob("img_*")))
+
+    # Сколько кадров в ролике и сколько из них под реальный материал.
+    # Один файл спокойно показывается два-три раза разными кадрированиями,
+    # поэтому нужное число файлов делится на 2.5.
+    base = float((job.get("style_override") or {}).get(
+        "base_duration_range", [4.2, 5.6])[0]) or 4.8
+    share = float((job.get("style_override") or {}).get("generated_share", 0.30))
+    shots = max(8, int(total / base))
+    need_real = int(shots * (1 - share) / 2.5)
+
+    log(f"  реального материала {real}, под ролик нужно около {need_real}")
+    if real >= need_real:
+        return
+    missing = min(need_real - real, int(job.get("fill_limit", 24)))
+    log(f"  ! не хватает {need_real - real}; догенерирую {missing} кадров")
+
+    # Промпты добора: из спецификации, иначе строятся из архивных запросов —
+    # они описывают ровно те предметы, которых не нашлось настоящими.
+    base_prompts = job.get("fill_prompts") or [
+        f"{q}, authentic looking, warm lamp light, aged materials, "
+        f"shallow depth of field, photographic, cinematic, 16:9"
+        for q in job.get("archive_queries", [])
+    ]
+    if not base_prompts:
+        log("  ! нечем догенерировать: нет ни fill_prompts, ни archive_queries")
+        return
+
+    out = work / "images"
+    out.mkdir(parents=True, exist_ok=True)
+    # Нумерация с 900: добор не должен перебить основные промпты, которые
+    # привязаны к порядку сценария номерами img_001..img_0NN.
+    for k in range(missing):
+        dst = out / f"img_{900 + k:03d}.jpg"
+        if dst.exists():
+            continue
+        p = base_prompts[k % len(base_prompts)]
+        r = requests.post(f"{XAI}/images/generations", timeout=180,
+                          headers={"Authorization": f"Bearer {key}",
+                                   "Content-Type": "application/json"},
+                          json={"model": model, "prompt": p, "n": 1})
+        if r.status_code != 200:
+            log(f"  ! добор {k+1} не вышел: {r.status_code} {r.text[:140]}")
+            continue
+        try:
+            url = r.json()["data"][0]["url"]
+        except (KeyError, IndexError):
+            log(f"  ! добор {k+1}: в ответе нет ссылки")
+            continue
+        dst.write_bytes(requests.get(url, timeout=120).content)
+        log(f"  добор {k+1}/{missing}")
+    # промпты добора кладутся рядом: build.py возьмёт из них слова для
+    # смыслового подбора, иначе эти кадры лягут под текст случайно
+    (out / "_fill_prompts.json").write_text(
+        json.dumps([base_prompts[k % len(base_prompts)]
+                    for k in range(missing)], ensure_ascii=False),
+        encoding="utf-8")
 
 
 def main(job_path, stage="all"):
@@ -737,6 +845,8 @@ def main(job_path, stage="all"):
     # Добор материала: озвучка и картинки уже есть, трогать их нельзя.
     if stage == "material":
         fetch_material(job, work)
+        log("── отбраковка материала роботом")
+        vet.vet_all(job, work, use_vision=job.get("vet_vision", True))
         log("── материал добран, озвучка и картинки не тронуты")
         return
 
@@ -756,6 +866,12 @@ def main(job_path, stage="all"):
         images_sync(prompts, work / "images", model, key)
 
     fetch_material(job, work)
+
+    log("── отбраковка материала роботом")
+    vet.vet_all(job, work, use_vision=job.get("vet_vision", True))
+
+    log("── добор генерацией того, чего не хватило")
+    fill_gaps(job, work, total, model, key)
 
     (work / "state.json").write_text(json.dumps(
         {"total_audio": total, "marks": len(marks)}, indent=1))

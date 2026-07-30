@@ -1,0 +1,256 @@
+{
+  "_": "Полноформатный ролик канала, 20-22 минуты. Сценарий построен на РЕАЛЬНЫХ задокументированных находках. Цифры даны осторожно и округлённо — точные суммы и даты стоит сверить перед выкладкой, список спорных мест в поле _проверить.",
+  "id": "pawn-02",
+  "_проверить": [
+    "Чаша Дин (Северная Сун), куплена на гаражной распродаже в штате Нью-Йорк, продана на Sotheby's в марте 2013. В ролике сказано «чуть больше двух миллионов» — сверить точную сумму молотка.",
+    "Копия Декларации независимости (broadside Данлапа) за рамой картины с блошиного рынка в Пенсильвании, 1989. Первая продажа 1991, повторная 2000. Суммы в ролике округлены.",
+    "Третье императорское пасхальное яйцо Фаберже, куплено торговцем ломом на переплавку, опознано около 2014. Сумма покупки и оценка округлены.",
+    "Одеяло вождя юта (First Phase), Antiques Roadshow, Тусон, 2001. Оценка в эфире и последующая продажа — сверить.",
+    "Стаффордширский клад, 2009, оценка Комитета по сокровищам. Сумма округлена.",
+    "Общий совет: перед выкладкой прогнать все суммы и даты по первоисточникам (каталоги аукционных домов, пресс-релизы). Формулировки в сценарии намеренно осторожные — «just over», «about», «around» — чтобы округление не читалось как ложная точность."
+  ],
+  "_тема": "Не повторяет pawn-01 (изнанка предмета, клейма и износ). Здесь — механика самих находок: почему ценное вообще попадает на барахолку и что у всех этих историй общего.",
+  "topic": {
+    "slug": "how-valuable-objects-end-up-at-yard-sales",
+    "keywords": [
+      "yard sale",
+      "house clearance",
+      "estate sale",
+      "scrap dealer",
+      "picture frame",
+      "attic",
+      "provenance lost",
+      "misattribution",
+      "chief blanket",
+      "imperial egg",
+      "song dynasty bowl",
+      "metal detector hoard"
+    ]
+  },
+  "_голос": "Голос берётся из секрета ELEVENLABS_VOICE_ID. Поле voice_id здесь намеренно отсутствует.",
+  "voice_settings": {
+    "stability": 0.46,
+    "similarity_boost": 0.75,
+    "style": 0.14
+  },
+  "music": "assets/music/bed.mp3",
+  "bed_gain_db": -27.0,
+  "_цветокор": "Не oak_brass и не long_footage — их занял pawn-01, channel.py это проверяет. Здесь ламповый свет: самый вечерний из тёплой семьи, под истории про чердаки и лавки после закрытия.",
+  "lut": "lamp_glow",
+  "archive_lut": "archive_paper",
+  "batch": false,
+  "material_overshoot": 1.4,
+  "fill_limit": 24,
+  "_отбраковка": "Робот отбирает материал сам: дешёвый локальный проход плюс проверка зрением через xAI. vet_vision:false выключает зрение и оставляет только локальные проверки.",
+  "vet_vision": true,
+  "photo_sources": [
+    "met",
+    "loc",
+    "wikimedia"
+  ],
+  "video_sources": [
+    "pexels",
+    "pixabay",
+    "archive_org"
+  ],
+  "script_blocks": [
+    "In two thousand and thirteen, a small white bowl was sold in New York for just over two million dollars. It is about five inches across. It has no decoration you would notice from a distance, no gold, no colour, nothing that announces itself. The people who owned it had bought it at a yard sale for a few dollars, and for years it sat on a shelf in their living room, next to ordinary things, being an ordinary thing. Then somebody looked at it properly. It turned out to be a bowl from the Northern Song dynasty, roughly a thousand years old, and one of only two known to exist. The second one is in a museum in London. So here is the question this video is actually about. Not how lucky those people were. Something stranger. How does an object like that end up on a folding table in somebody's driveway, priced at less than a sandwich? Because this is not a freak event. It happens every year, in every country, with paintings, with furniture, with jewellery, with documents. And when you line the cases up next to each other, they are not random at all. They follow a pattern so consistent that you can almost predict the shape of the next one.",
+    "To understand the pattern you have to stop thinking about luck and start thinking about volume. Consider how many objects exist. Every household that has ever been cleared out, every estate that has ever been settled, every attic emptied after a death, every garage cleared before a move. The number of individual objects passing through that system, every single day, is enormous, and almost all of them are exactly what they appear to be. A chipped plate is a chipped plate. But the system that moves them has one specific weakness, and it is not greed and it is not stupidity. It is speed. A house clearance is a job with a deadline. Somebody has three days to empty four decades of accumulation, and they are being paid by the job, not by the hour. Nobody in that chain is being paid to be curious. The person who prices the yard sale table is pricing forty items an hour. The rule they use is not what is this, it is does this look nice, and how fast will it move. Under those conditions, the objects most likely to be mispriced are not the flashy ones. They are the quiet ones. Understated, undecorated, unfamiliar. Exactly like a plain white bowl.",
+    "Now take the most famous case of all, because it makes the mechanism visible. In nineteen eighty-nine, a man at a flea market in Pennsylvania bought a framed painting for a few dollars. He did not want the painting. He wanted the frame, which he thought he could reuse, and the picture inside was, by his own account, not very good. When he took the frame apart at home, the backing came away and there was a folded document behind the canvas. It was a printed copy of the Declaration of Independence, one of the original broadsides printed on the night of July the fourth, seventeen seventy-six, to be carried out and read aloud across the colonies. Fewer than thirty of them are known to survive. It sold at auction two years later for well over two million dollars, and again about a decade after that for several times that figure. Look carefully at what happened there. The document was not hidden by anyone. Nobody concealed it. It had simply been used as backing board by a framer who had no idea what was in his hands, and then it sat inside that frame, invisible, for as long as nobody had a reason to open it. Which is the whole point. Value does not announce itself. It waits.",
+    "The next case is the one that keeps dealers awake at night, because it came within days of being destroyed. Sometime in the two thousands, a scrap metal dealer in the American midwest bought a small gold ornament at a market. It was heavy, it was clearly gold, and gold has a price per gram. He paid something in the region of fourteen thousand dollars, which was slightly more than the metal alone was worth, and his plan was straightforward. He intended to break it up and melt it down. The plan failed for the most boring reason imaginable. He could not find a buyer willing to pay him a profit on the scrap value, so the object sat in his kitchen. Years passed. Eventually, out of frustration, he typed a few words from the engraving into a search engine. What came back was an article about a lost Faberge egg, one of the imperial eggs made for the Russian royal family, missing since the revolution. The object on his kitchen counter, which he had bought as raw material, was valued afterwards in the tens of millions. He had owned it for years while actively trying to destroy it, and the only reason it survives is that nobody would give him a good enough price for the gold.",
+    "It is worth pausing on that, because it exposes something uncomfortable about how value actually works. That egg was not worth tens of millions because of what it is made of. Melted down, it was worth its weight, and that was the number every professional in the scrap trade correctly calculated. It was worth tens of millions because of what it is, who made it, who it was made for, and the fact that it went missing. Almost all of that value is information. It is not in the object, it is attached to the object, and it can be lost. That is the real mechanism behind every story in this video. Objects do not lose their value. They lose their paperwork. A grandmother dies and the story of where the blanket came from dies with her. A gallery closes and the records go into a skip. A family emigrates and the labels stay behind. The object continues to exist, physically unchanged, but it has become anonymous, and an anonymous object is priced by how it looks. This is why the finds cluster where they do. Not in the fanciest houses, but wherever a chain of memory has been broken.",
+    "Which brings us to a chair in Arizona. In two thousand and one, a man brought a folded blanket to a travelling appraisal event. It was a family piece. It had been in the household for generations, and for part of that time it had been draped over the back of a chair, and slept under, and treated the way you treat a blanket. He wanted to know roughly what it was worth. The appraiser opened it, and then had to sit down. It was a first phase chief's blanket, Navajo, woven around the middle of the nineteenth century. Very few survive, because they were made to be used, and used textiles wear out. The appraisal given on camera ran to several hundred thousand dollars. It later sold for substantially more than that. And notice again what did not happen. Nobody found it in a wall. Nobody dug it up. It had been in plain sight, in a living room, for decades, folded over a chair, doing an ordinary job. Its owner had looked at it thousands of times. The information about what it was had simply not travelled down the family with the object itself.",
+    "There is a second way this happens, and it is almost the opposite of losing the paperwork. Sometimes the paperwork exists, and it is wrong. Early in the twentieth century, a Norwegian collector bought a landscape by Vincent van Gogh. He was told, shortly afterwards and by someone whose opinion he respected, that it was not genuine. That was all it took. The painting was taken down, carried upstairs, and put in the attic, where it stayed for decades while the family quietly did not talk about it. It was not lost. Everybody knew exactly where it was. It had simply been reclassified, in a single conversation, from a painting into an embarrassment. Much later it was examined again, with letters, with pigment analysis, with the artist's own written description of painting that exact scene on that exact day, and the attribution was reversed. It is now accepted as genuine. Think about what that means. For most of a century, the object did not change at all. What changed was a sentence attached to it. And that sentence was strong enough to move a major painting out of a drawing room and into an attic, and to keep it there long after the man who said it was dead. Attribution is not a property of an object. It is an opinion about an object, and opinions can be wrong in both directions.",
+    "Not every case involves a broken chain, though, and it is worth being fair about that. Some finds are genuinely found. In two thousand and nine, a man with a metal detector was working a field in Staffordshire, in the English midlands, on land he had permission to search. Over several days he recovered gold and silver objects, and then more, and then more again, until the count ran into thousands of fragments. It became the largest hoard of Anglo-Saxon gold ever discovered, and it was valued in the millions. But look at the difference. He was not lucky in the sense that the bowl owners were lucky. He had spent years learning the ground, he had permission, he knew what he was looking at when it came up, and crucially, he stopped digging and called the authorities instead of pulling everything out himself. That last decision is what turned a pile of metal into an archaeological record, and it is a large part of why the valuation was what it was. The hoard is a reminder that the two kinds of find are not the same. One is a failure of information. The other is a reward for having it.",
+    "So let us line them up and see what they share. A plain bowl priced by appearance. A document invisible inside a frame. A gold object valued as metal. A textile treated as bedding. A hoard identified by somebody who had done the reading. In four of those five, the object was in ordinary circulation, handled by people who were not careless and not foolish, and who simply had no reason to ask a second question. That is the pattern, and it is not flattering to anybody, which is precisely why it is reliable. The finds do not happen because someone was clever. They happen because everyone else in the chain was busy. Every person who handled that bowl before it reached the auction house behaved completely reasonably given what they knew. The clearance firm was working to a deadline. The seller was pricing to move stock. The buyer liked how it looked. None of them did anything wrong. The value slipped through not because of a mistake, but because nobody in the sequence was being paid to slow down. And that gap, that small structural gap between how fast objects move and how slowly they get looked at, is the entire opportunity.",
+    "Now the part that responsible versions of this video include and the rest leave out. The odds are terrible. For every case in this video there are millions of objects that are exactly what they look like, sold for exactly what they are worth, to people who will never hear from an auction house. Treating this as a strategy for making money is a reliable way to fill a garage with things nobody wants. The people who consistently do well out of undervalued objects are not lucky. They are specialised. They know one narrow category extremely well, they look at hundreds of examples of it, and they are right often enough to cover the times they are wrong. That is a skill built over years, and it looks nothing like wandering a market hoping. And there is a second cost, which is quieter and much more common than the lucky find. It is the object that goes the other way. The piece that gets sold cheap because the family did not know, or thrown out during a clearance because it looked like clutter. That loss happens far more often than the win, it happens to ordinary people rather than collectors, and unlike the win, it is entirely preventable.",
+    "Which is where this leaves you, and it is smaller and more useful than it sounds. You are not going to find an imperial egg. But you will, at some point, be the person clearing a house, or sorting a relative's belongings, or deciding what goes in the skip. And in that moment you are standing exactly where every one of these stories began. So, three things, and they cost nothing. First, before anything is thrown away or priced, photograph it. Not artistically, just clearly, including the underside and any marks. A photograph costs nothing and can be shown to somebody who knows. Second, write down what you were told about it, while there is still somebody alive to tell you. Where it came from, who owned it, roughly when it arrived in the family. That sentence is the paperwork, and the paperwork is most of the value. Third, when something is genuinely unfamiliar, when you cannot place it at all, that is not a reason to assume it is worthless. Unfamiliar is exactly what a plain white bowl from the Northern Song dynasty looks like to somebody who has never seen one. Slow down on the things you do not recognise. That is the whole method. It is not expertise, and it is not luck. It is just refusing, for thirty seconds, to be in a hurry.",
+    "It is worth knowing what actually happens after somebody decides an object might be something, because the popular picture is wrong. Nobody looks at a thing and pronounces a number. The first stage is almost always a photograph and a refusal. Auction houses receive an enormous volume of hopeful enquiries, and the overwhelming majority are answered politely and quickly with a version of no. That is not arrogance. A specialist in one narrow field can dismiss most submissions in seconds because they have seen thousands of examples and the object in the photograph is plainly a later copy, or a common pattern, or damaged past the point where value survives. If something does get past that stage, the next question is not what is it worth. It is where has it been. Provenance, in practice, means a chain of boring evidence. An old receipt. A name in an inventory. A photograph of a room with the object visible on a shelf. A letter that mentions it. Each link is unremarkable on its own, and together they are worth more than any opinion about the object itself. This is the part people find disappointing, and it is the part that matters most. The reason those famous finds took years to resolve is not that experts were slow. It is that somebody had to reconstruct a history that had been thrown away, from whatever fragments happened to survive. And that is also why the advice at the end of this video is about paper rather than about objects.",
+    "If you are wondering where this is still happening right now, the answer is not where most people look. It is not in paintings, because everybody checks paintings. The categories where objects still slip through are the ones where the value lives entirely in knowledge rather than in materials. Books and printed matter, where a plain binding can hide a first issue and the difference is a line of type on a page nobody opens. Textiles, because they look like household goods and they get used until they fall apart. Scientific and navigational instruments, which read as clutter to anybody who does not know what they do. Studio pottery, where the difference between a nice mug and an important one is a small mark on the foot. Early photography, which people throw away in quantity because the images are of strangers. Notice what these have in common. None of them are made of anything precious. None of them look expensive. In every case a person holding the object, with no bad intentions and reasonable eyesight, will conclude that it is ordinary, and in almost every case they will be right. That is exactly why the exceptions survive long enough to be found. Gold gets noticed immediately. A book does not.",
+    "And now the mistake that runs the other way, which is far more common and gets talked about far less. For every person who sold something valuable cheaply, there are many more who bought something worthless expensively. The market for convincing fakes exists precisely because stories like the ones in this video exist. Somebody hears that a plain bowl was worth two million, and the next plain bowl they see acquires a glow it has not earned. Enthusiasm is the most expensive tool you can bring to a market stall. The professionals protect themselves with a habit that sounds boring and is not. They assume the ordinary explanation first. Most old things are simply old. Most marks are the marks you would expect. Most stories attached to objects by their sellers are unverifiable, and unverifiable is not the same as true. The question that saves money is not could this be something, because anything could be something. The question is what would have to be true for this to be what I hope it is, and can I check any of that. Usually you can check at least one thing, and usually it does not hold. That is not pessimism, that is arithmetic. If your rule lets in every possibility, you will buy everything, and almost all of it will be exactly what it looked like."
+  ],
+  "_картинки": "Только общие планы, руки, интерьеры, фактура, атмосфера. Ни одного конкретного предмета из сюжета: под предмет идёт настоящее фото из архива. Порядок соответствует порядку сценария.",
+  "image_prompts": [
+    "plain white ceramic bowl on a cluttered folding table at a yard sale, morning light, shallow depth of field, photographic, 16:9",
+    "suburban driveway sale, folding tables of assorted household objects, early morning, warm haze, photographic, 16:9",
+    "cardboard boxes stacked in a cleared house, bare walls, afternoon light through window, photographic, 16:9",
+    "hands quickly pricing items with stickers on a market table, motion, warm daylight, photographic, 16:9",
+    "back of an old picture frame with brown paper backing and rusted tacks, macro, raking light, photographic, 16:9",
+    "hands prising apart a wooden picture frame on a kitchen table, warm lamp light, photographic, 16:9",
+    "cluttered scrap metal yard with gold coloured fragments in a tray, industrial light, photographic, 16:9",
+    "small heavy gold ornament sitting on a domestic kitchen counter, ordinary surroundings, warm light, photographic, 16:9",
+    "folded woollen blanket draped over the back of a wooden chair in a living room, soft daylight, photographic, 16:9",
+    "close-up of hand woven wool texture, natural dye stripes, raking light, macro, photographic, 16:9",
+    "metal detector on ploughed farmland at dawn, mist, wide landscape, photographic, 16:9",
+    "hands brushing soil from a small metal object in a field, macro, overcast daylight, photographic, 16:9",
+    "dim antique shop interior, crowded shelves of unlabelled objects, warm lamp light, photographic, 16:9",
+    "auction room before a sale, empty chairs, warm wood panelling, low light, photographic, 16:9",
+    "handwritten inventory notes and a pencil on an old desk, warm lamp glow, macro, photographic, 16:9",
+    "person photographing a small object on a plain surface with a phone, warm domestic light, photographic, 16:9",
+    "attic interior with dust in a single shaft of light, stacked trunks, photographic, 16:9",
+    "skip outside a house full of discarded household objects, overcast day, photographic, 16:9",
+    "landscape painting leaning face to the wall in a dusty attic, single window light, photographic, 16:9",
+    "stack of old cloth bound books on a table, worn spines, warm lamp light, macro, photographic, 16:9",
+    "brass navigational instrument on a workshop bench, warm raking light, macro, photographic, 16:9",
+    "box of anonymous vintage photographs spread on a table, warm daylight, photographic, 16:9",
+    "underside of a studio pottery bowl showing an impressed mark, macro, raking light, photographic, 16:9",
+    "buyer holding an object up to the light at a market stall, uncertain expression, warm daylight, photographic, 16:9",
+    "old handwritten receipt and inventory papers on a desk, warm lamp light, macro, photographic, 16:9",
+    "specialist examining a small object under a desk lamp with gloves, warm interior, photographic, 16:9"
+  ],
+  "_запросы": "Запрос должен называть ПРЕДМЕТ и ФАКТУРУ, а не обстановку: общие слова приводят общий сток. Робот всё равно отбракует нерелевантное, но чем точнее запрос, тем меньше уходит в брак.",
+  "footage_queries": [
+    "antique shop interior wooden shelves",
+    "vintage objects on wooden table",
+    "hands examining antique object closeup",
+    "flea market antique stall objects",
+    "old picture frame back closeup",
+    "porcelain ceramic bowl closeup",
+    "gold jewellery closeup macro",
+    "woven wool textile texture closeup",
+    "metal detecting field soil",
+    "auction room gavel bidding",
+    "dusty attic boxes light beam",
+    "old documents parchment paper closeup",
+    "antique clock mechanism closeup",
+    "hands sorting through box of objects",
+    "candle lamp light on aged wood",
+    "turning pages of an old book",
+    "old books stack closeup pages",
+    "brass scientific instrument closeup",
+    "vintage photographs on table",
+    "pottery bottom mark closeup"
+  ],
+  "archive_queries": [
+    "song dynasty ceramic bowl",
+    "chinese porcelain museum object",
+    "declaration of independence broadside",
+    "eighteenth century printed document",
+    "faberge imperial egg",
+    "russian imperial jewellery",
+    "navajo chief blanket textile",
+    "native american woven blanket",
+    "anglo saxon gold hoard",
+    "medieval gold metalwork",
+    "antique dealer shop historic",
+    "auction house historic interior",
+    "estate sale furniture",
+    "antique clock mechanism",
+    "van gogh landscape painting",
+    "nineteenth century oil painting landscape",
+    "early photography portrait daguerreotype",
+    "antique scientific instrument brass",
+    "studio pottery ceramics mark",
+    "auction catalogue historic page",
+    "handwritten estate inventory document"
+  ],
+  "reject": {
+    "clip": [],
+    "arch": []
+  },
+  "style_override": {
+    "_доля": "30% экранного времени — генерация. Если реального не хватит после отбраковки, fill_gaps догенерирует и доля поднимется — это видно в логе сборки.",
+    "generated_share": 0.3,
+    "_сжатие": "20 минут при crf 22 — около 550 МБ, с большим запасом до лимита GitHub Releases в 2 ГБ.",
+    "crf": 22,
+    "_темп": "Тело ролика. Двадцать минут при базе 4.6 секунды — примерно 230 кадров.",
+    "base_duration_range": [
+      4.2,
+      5.4
+    ],
+    "deceleration_range": [
+      1.1,
+      1.3
+    ],
+    "_вступление": "ТРИ МИНУТЫ быстрой перебивки. Куски по 2-5 секунд: именно первые минуты решают удержание, и длинный кадр здесь стоит дороже всего. Доля видео поднята до 0.65 — движение держит лучше фотографии.",
+    "intro_footage_seconds": 185,
+    "intro_clip_duration_range": [
+      2,
+      5
+    ],
+    "intro_photo_duration_range": [
+      2.5,
+      5
+    ],
+    "intro_clip_share": 0.65,
+    "intro_transition_duration_range": [
+      0.3,
+      0.6
+    ],
+    "body_clip_every_n_shots": 3,
+    "transitions": [
+      "dissolve",
+      "fade",
+      "fadeslow",
+      "hblur",
+      "smoothleft",
+      "smoothup",
+      "smoothdown",
+      "slideleft",
+      "slideright",
+      "wipeleft",
+      "circleopen"
+    ],
+    "transition_duration_range": [
+      0.7,
+      1.3
+    ],
+    "hard_cut_probability": 0.0,
+    "_эффекты": "Убраны vhs_dark, prism_1 и technicolor_flash: расслоение каналов и призматическая кайма — приёмы про технику и цифру, на лавке древностей читаются как брак.",
+    "effects_enabled": true,
+    "effect_probability": 0.28,
+    "effects": [
+      "vintage_blemish",
+      "charcoal_film",
+      "sunset_2",
+      "heat_print",
+      "brass_gleam",
+      "by_the_fireplace"
+    ],
+    "fps": 30
+  },
+  "youtube": {
+    "title": "The Three Dollar Bowl: How Priceless Things End Up at Yard Sales",
+    "title_alternatives": [
+      "Why Valuable Objects Keep Turning Up on Folding Tables",
+      "The Pattern Behind Every Great Antique Find"
+    ],
+    "description_intro": "A bowl bought for pocket change sold for over two million dollars. A founding document spent decades hidden inside a picture frame. An imperial Easter egg was nearly melted for scrap. These are not flukes. Line the cases up and the same mechanism appears every time — and it has almost nothing to do with luck.",
+    "chapters": [
+      "The three dollar bowl",
+      "Volume, speed, and the quiet objects",
+      "Behind the picture frame",
+      "The egg that was nearly melted",
+      "Value is information, and information is lost",
+      "The blanket on the chair",
+      "The painting in the Norwegian attic",
+      "The hoard in the field",
+      "What all of them share",
+      "The odds, honestly",
+      "What to actually do",
+      "What actually happens at the auction house",
+      "Where it still happens",
+      "The mistake that runs the other way"
+    ],
+    "description_notes": "This is a general interest documentary, not valuation advice. Figures are approximate and rounded; anything you believe may be significant is worth showing to a qualified specialist in person, not to the internet.",
+    "hashtags": [
+      "#antiques",
+      "#auction",
+      "#history"
+    ],
+    "tags": [
+      "antiques",
+      "auction",
+      "yard sale finds",
+      "flea market finds",
+      "house clearance",
+      "estate sale",
+      "faberge egg",
+      "song dynasty",
+      "navajo blanket",
+      "staffordshire hoard",
+      "antique valuation"
+    ],
+    "thumbnail_at": 640.0
+  }
+}

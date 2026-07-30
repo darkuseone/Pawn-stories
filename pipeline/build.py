@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import channel
 import render
+import vet
 import style as style_mod
 from render import W, H, FPS
 
@@ -110,48 +111,94 @@ class ClipCutter:
         return round(start, 3)
 
 
-class ImagePicker:
+STOP_WORDS = {
+    "the", "a", "an", "of", "and", "or", "in", "on", "at", "to", "for",
+    "with", "from", "that", "this", "it", "is", "was", "were", "are", "be",
+    "been", "you", "your", "they", "them", "their", "not", "but", "what",
+    "when", "who", "how", "why", "all", "one", "two", "its", "has", "had",
+    "have", "will", "would", "can", "could", "about", "into", "than", "then",
+    "there", "here", "very", "just", "more", "most", "some", "any", "out",
+    "closeup", "close", "up", "shot", "cinematic", "detail", "warm", "light",
+}
+
+
+def words_of(text: str):
+    """Значимые слова строки. Общие и служебные выброшены."""
+    import re
+    return {w for w in re.findall(r"[a-zA-Z]+", (text or "").lower())
+            if len(w) > 2 and w not in STOP_WORDS}
+
+
+class ShotPicker:
     """
-    Отдаёт картинку, которая соответствует тому, что звучит в эту секунду.
+    Выдаёт материал, который СООТВЕТСТВУЕТ ТОМУ, ЧТО ЗВУЧИТ В ЭТУ СЕКУНДУ.
 
-    Раньше картинки выдавались по кругу: список кончался и начинался заново
-    с первой. На ролике в тридцать девять минут при шестидесяти четырёх
-    картинках круг проходится четыре раза, и на сороковой минуте зритель
-    видит иллюстрацию к первому абзацу — под текст про совсем другое.
+    Было два поколения этой логики, и оба недостаточны.
 
-    Теперь позиция в списке привязана к позиции на таймлайне. Список
-    промптов написан в порядке сценария, поэтому «сорок процентов ролика
-    прошло» означает «нужен кадр из сорока процентов списка». Повторы
-    остаются (кадров больше, чем картинок), но повторяется соседнее, а не
-    начало ролика.
+    Первое: выдача по кругу. Список кончался и начинался заново, поэтому на
+    сороковой минуте зритель видел иллюстрацию к первому абзацу.
 
-    Окно в два шага в обе стороны нужно, чтобы подряд идущие кадры не
-    попадали на одну и ту же картинку: внутри окна берётся наименее
-    показанная. Выбор детерминирован — тот же id даёт тот же ролик.
+    Второе: привязка позиции в списке к позиции на таймлайне. Это чинило
+    круг, но опиралось на предположение, что материал лежит в порядке
+    сценария. Для сгенерированных картинок так и есть — промпты пишутся по
+    порядку. Для стока и архива НЕТ: они приходят в порядке выдачи поисковика,
+    и «сорок процентов списка» не значит ровно ничего.
+
+    Здесь выбор идёт ПО СМЫСЛУ. У каждого файла есть слова: у генерации — из
+    промпта, у стока и архива — из запроса, по которому он скачан. У кадра
+    есть текст предложений, которые под ним звучат. Берётся файл с наибольшим
+    пересечением слов.
+
+    При равном пересечении (а оно часто нулевое — половина предложений не
+    содержит предметных слов вовсе) выбор падает обратно на позицию в
+    таймлайне: это по-прежнему лучше случайного. Плюс штраф за повторный
+    показ и запрет на два одинаковых кадра подряд.
+
+    Выбор детерминирован: тот же id и тот же материал дают тот же ролик.
     """
 
-    WINDOW = 2
+    WINDOW = 3
 
     def __bool__(self):
         return bool(self.pool)
 
     def __init__(self, pool, total: float):
+        # pool: [(path, tag, keywords), ...]
         self.pool = pool
         self.total = max(total, 0.001)
         self.used = {}
         self.last = None
+        self.hits = 0          # сколько раз попали по смыслу
+        self.calls = 0
 
-    def take(self, t: float):
+    def take(self, t: float, text: str = ""):
         n = len(self.pool)
+        if not n:
+            raise SystemExit("пустой пул материала")
+        want = words_of(text)
         k = min(n - 1, max(0, int(t / self.total * n)))
-        lo, hi = max(0, k - self.WINDOW), min(n, k + self.WINDOW + 1)
-        window = [j for j in range(lo, hi) if self.pool[j][0] != self.last]
-        if not window:
-            window = [k]
-        j = min(window, key=lambda x: (self.used.get(x, 0), abs(x - k), x))
-        self.used[j] = self.used.get(j, 0) + 1
-        self.last = self.pool[j][0]
-        return self.pool[j]
+        self.calls += 1
+
+        def score(j):
+            path, _tag, kw = self.pool[j]
+            overlap = len(want & kw)
+            same = 1 if path == self.last else 0
+            # порядок важен: сначала не повторяться, потом смысл,
+            # потом реже показанное, потом ближе по таймлайну
+            return (same, -overlap, self.used.get(j, 0), abs(j - k), j)
+
+        best = min(range(n), key=score)
+        if len(want & self.pool[best][2]):
+            self.hits += 1
+        self.used[best] = self.used.get(best, 0) + 1
+        self.last = self.pool[best][0]
+        return self.pool[best][0], self.pool[best][1]
+
+    def report(self):
+        if not self.calls:
+            return "не использовался"
+        return (f"{self.hits} из {self.calls} кадров подобраны по смыслу "
+                f"({self.hits/self.calls*100:.0f}%)")
 
 
 class MaterialMix:
@@ -227,7 +274,75 @@ class MaterialMix:
 
 # ───────────────────────── ПЛАН КАДРОВ ─────────────────────────
 
-def plan_shots(marks, st, assets, total, job_reject=None):
+def keywords_for(assets: Path, job):
+    """
+    Слова каждого файла материала — по ним подбирается кадр под текст.
+
+    Генерация: слова промпта, по которому её нарисовали. Промпты лежат в
+    спецификации по порядку, а файлы называются img_001, img_002 — связь
+    прямая по номеру.
+
+    Сток и архив: слова ЗАПРОСА, по которому файл скачан. Запрос пишется в
+    манифест при скачивании. У материала, добранного до появления этого
+    поля, запроса нет — тогда в ход идёт имя файла, где остался хотя бы
+    источник. Это хуже, но не пусто, и ролик собирается.
+    """
+    # Ключ — НОМЕР файла, а не имя целиком. Имена различаются суффиксом:
+    # генерация кладётся как img_001.jpg, сток как clip_003_pexels.mp4,
+    # синтетика для отладки как img_001_mock.jpg. Совпадение по полному
+    # имени молча промахивалось на всём, кроме генерации, и подбор по
+    # смыслу давал ноль попаданий там, где он должен работать.
+    def num(name: str):
+        try:
+            return int(name.split("_")[1])
+        except (IndexError, ValueError):
+            return None
+
+    out = {}                       # (префикс, номер) -> слова
+    prompts = job.get("image_prompts") or []
+    for n, p in enumerate(prompts, 1):
+        out[("img", n)] = words_of(p)
+
+    # кадры добора (img_900+) лежат вне порядка сценария, их промпты
+    # сохранены отдельно при генерации
+    fill = assets / "images" / "_fill_prompts.json"
+    if fill.exists():
+        try:
+            for k, p in enumerate(json.loads(fill.read_text(encoding="utf-8"))):
+                out[("img", 900 + k)] = words_of(p)
+        except json.JSONDecodeError:
+            pass
+
+    for folder in ("footage", "archive"):
+        man = assets / folder / "_manifest.json"
+        if not man.exists():
+            continue
+        try:
+            rows = json.loads(man.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        for row in rows:
+            name = Path(row.get("file", "")).name
+            n = num(name)
+            if n is not None:
+                out[(name.split("_")[0], n)] = words_of(row.get("q", ""))
+
+    missing = 0
+    for folder, pat in (("footage", "clip_*"), ("archive", "arch_*")):
+        for p in (assets / folder).glob(pat):
+            n = num(p.name)
+            if n is None:
+                continue
+            if not out.get((p.name.split("_")[0], n)):
+                out[(p.name.split("_")[0], n)] = words_of(p.stem.replace("_", " "))
+                missing += 1
+    if missing:
+        log(f"  ! у {missing} файлов нет запроса в манифесте — "
+            f"подбор по смыслу для них слабее")
+    return out
+
+
+def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     """
     Раскладывает материал по таймлайну.
 
@@ -236,13 +351,23 @@ def plan_shots(marks, st, assets, total, job_reject=None):
     и режет там. Поэтому склейки попадают в паузы речи.
     """
     def keep(paths, kind, rejected):
-        """Выкидывает то, что человек забраковал на листе отбора."""
+        """Выкидывает забракованное — роботом в vet.py или руками в reject."""
         out = [p for p in paths if int(p.name.split("_")[1]) not in rejected]
         if rejected:
             log(f"  {kind}: отклонено {len(paths) - len(out)} из {len(paths)}")
         return out
 
-    rej = job_reject or {}
+    # Отбраковка идёт из двух мест сразу. Робот (vet.py) отсеивает то, что не
+    # по теме и что испорчено по форме; поле reject в спецификации остаётся
+    # ручным довеском — им отменяют или дополняют решение робота, не трогая
+    # код. Файлы при этом не удаляются ни в том, ни в другом случае.
+    rej = dict(job_reject or {})
+    auto = vet.rejected_from(assets)
+    for kind, nums in auto.items():
+        if nums:
+            log(f"  {kind}: робот забраковал {len(nums)} — {nums}")
+        rej[kind] = sorted(set(rej.get(kind, [])) | set(nums))
+
     images = sorted((assets / "images").glob("img_*.jpg"))
     archive = keep(sorted((assets / "archive").glob("arch_*.jpg")),
                    "архив", set(rej.get("arch", [])))
@@ -260,8 +385,20 @@ def plan_shots(marks, st, assets, total, job_reject=None):
     # две трети рисованного. Теперь пропорцией заведует MaterialMix, а
     # каждая семья ходит по своему списку — привязка позиции в списке к
     # позиции на таймлайне (пункт 10 задания) при этом сохраняется для обеих.
-    gen_pick = ImagePicker([(p, "gen") for p in images], total)
-    arch_pick = ImagePicker([(p, "arch") for p in archive], total)
+    # Слова каждого файла: у генерации — из промпта, по которому её рисовали,
+    # у стока и архива — из запроса, по которому он скачан. По ним ShotPicker
+    # и подбирает кадр под то, что звучит.
+    kw = keywords_for(assets, job)
+
+    def kw_of(p: Path):
+        try:
+            return kw.get((p.name.split("_")[0], int(p.name.split("_")[1])), set())
+        except (IndexError, ValueError):
+            return set()
+
+    gen_pick = ShotPicker([(p, "gen", kw_of(p)) for p in images], total)
+    arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total)
+    clip_pick = ShotPicker([(p, "clip", kw_of(p)) for p in clips], total)
     mix = MaterialMix(st.generated_share, bool(images), bool(archive),
                       bool(clips))
     if not archive:
@@ -270,12 +407,17 @@ def plan_shots(marks, st, assets, total, job_reject=None):
     if not clips:
         log("  ! стокового видео нет — вступление будет из одних фотографий")
 
-    def put_image(kind, t_pos, **extra):
+    def put_image(kind, t_pos, said="", **extra):
         """Ставит кадр-картинку нужной семьи и записывает его в счёт."""
-        src, tag = (gen_pick if kind == "gen" else arch_pick).take(t_pos)
+        src, tag = (gen_pick if kind == "gen" else arch_pick).take(t_pos, said)
         fr_name, fr = st.framing(src.name)
         return dict(kind="image", file=src, tag=tag,
                     framing=fr, framing_name=fr_name, **extra)
+
+    def said_at(t_pos: float, span: float = 8.0) -> str:
+        """Что звучит в эту секунду — текст предложений, накрывающих кадр."""
+        return " ".join(m["text"] for m in marks
+                        if m["end"] > t_pos and m["start"] < t_pos + span)
 
     # ВСТУПЛЕНИЕ. Первые минуты — быстрая перебивка: короткие куски видео
     # вперемешку с фотографиями. Ролик, который открывается статичной
@@ -296,7 +438,6 @@ def plan_shots(marks, st, assets, total, job_reject=None):
     # секунд — то есть ровно тем, от чего вступление и спасает.
     intro_end = min(st.intro_footage_seconds, total * 0.35)
 
-    clip_i = 0
     since_clip = 0       # сколько кадров-картинок подряд уже прошло
     next_gap = st.body_clip_every_n_shots
     cutter = ClipCutter()
@@ -342,16 +483,15 @@ def plan_shots(marks, st, assets, total, job_reject=None):
         got = mix.pick(["clip"] if kind == "clip" else ["gen", "arch"])
 
         if got == "clip":
-            src = clips[clip_i % len(clips)]
+            src, _ = clip_pick.take(t, said_at(t, dur))
             shots.append(dict(kind="clip", file=src, tag="clip",
                               src_start=cutter.take_start(src, dur),
                               start=round(t, 3), duration=dur,
                               transition=tr, transition_dur=trd,
                               effect=st.effect()))
-            clip_i += 1
         else:
             shots.append(put_image(
-                got, t, start=round(t, 3), duration=dur,
+                got, t, said=said_at(t, dur), start=round(t, 3), duration=dur,
                 # во вступлении по фотографии всегда идёт скольжение
                 # или наезд, статики тут быть не должно
                 move=st.rng.choice(INTRO_MOVES),
@@ -400,10 +540,27 @@ def plan_shots(marks, st, assets, total, job_reject=None):
         # ищем границу предложения БЛИЖАЙШУЮ к желаемой длительности,
         # а не первую её превышающую — иначе кадры systematически
         # получаются длиннее задуманного
-        j, best, best_err = i, i, abs(marks[i]["end"] - start - want)
+        #
+        # ПАУЗА ПОСЛЕ ПРЕДЛОЖЕНИЯ ПЕРЕВЕШИВАЕТ. Из двух границ, одинаково
+        # близких к желаемой длительности, выбирается та, после которой
+        # диктор молчит дольше. Смена кадра в тишине читается как решение
+        # монтажёра; смена ровно на первом слове следующей фразы — как
+        # случайность, даже когда она попадает в границу предложения.
+        # Бонус ограничен секундой: длинная пауза не должна перетягивать
+        # кадр далеко от заказанной длины.
+        def gap_after(idx_mark):
+            if idx_mark + 1 >= len(marks):
+                return 0.0
+            return max(0.0, marks[idx_mark + 1]["start"] - marks[idx_mark]["end"])
+
+        def cost(idx_mark):
+            err = abs(marks[idx_mark]["end"] - start - want)
+            return err - min(gap_after(idx_mark), 1.0) * 0.8
+
+        j, best, best_err = i, i, cost(i)
         while j < len(marks) - 1 and marks[j]["end"] - start < want * 1.6:
             j += 1
-            err = abs(marks[j]["end"] - start - want)
+            err = cost(j)
             if err < best_err:
                 best, best_err = j, err
         end = marks[best]["end"]
@@ -427,22 +584,22 @@ def plan_shots(marks, st, assets, total, job_reject=None):
                    and dur <= CLIP_MAX_SECONDS)
         got = mix.pick((["clip"] if clip_ok else []) + ["gen", "arch"])
 
+        said = " ".join(m["text"] for m in marks[first:best + 1])
+
         if got == "clip":
-            shots.append(dict(kind="clip", file=clips[clip_i % len(clips)],
-                              tag="clip",
-                              src_start=cutter.take_start(
-                                  clips[clip_i % len(clips)], dur),
+            src, _ = clip_pick.take(start, said)
+            shots.append(dict(kind="clip", file=src, tag="clip",
+                              src_start=cutter.take_start(src, dur),
                               start=start, duration=dur,
                               **{k: cfg[k] for k in
                                  ("transition", "transition_dur", "effect")}))
-            clip_i += 1
             since_clip = 0
             n = st.body_clip_every_n_shots
             next_gap = max(1, n + st.rng.choice([-1, 0, 0, 1]))
         else:
             since_clip += 1
             shots.append(put_image(
-                got, start, start=start, duration=dur,
+                got, start, said=said, start=start, duration=dur,
                 **{k: cfg[k] for k in
                    ("move", "speed", "transition", "transition_dur",
                     "effect")}))
@@ -459,6 +616,13 @@ def plan_shots(marks, st, assets, total, job_reject=None):
     # хвост: последний кадр дотягиваем до конца звука
     if shots:
         shots[-1]["duration"] = round(max(total - shots[-1]["start"], 0.1), 3)
+
+    # Попадание по смыслу — величина, которую надо видеть. Низкая доля
+    # означает, что запросы к стокам написаны словами, которых нет в
+    # сценарии, и кадры ложатся под текст случайно.
+    log(f"  подбор: генерация — {gen_pick.report()}")
+    log(f"  подбор: архив     — {arch_pick.report()}")
+    log(f"  подбор: сток      — {clip_pick.report()}")
     return shots
 
 
@@ -859,7 +1023,7 @@ def main(job_path):
     total = json.loads((assets / "state.json").read_text())["total_audio"]
 
     log("── план кадров")
-    shots = plan_shots(marks, st, assets, total, job.get("reject"))
+    shots = plan_shots(marks, st, assets, total, job.get("reject"), job)
     set_render_durations(shots)
     log(f"  {len(shots)} кадров на {total/60:.1f} мин, "
         f"средний {total/len(shots):.1f} сек")
