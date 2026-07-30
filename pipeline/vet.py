@@ -156,7 +156,10 @@ def cheap_problems(path: Path):
         bad.append(f"мелкое разрешение {w}x{h}")
 
     small = im.convert("L").resize((64, 36))
-    px = list(small.getdata())
+    try:
+        px = list(small.get_flattened_data())
+    except AttributeError:
+        px = list(small.getdata())
     pale = sum(1 for p in px if p > 224) / len(px)
     mean = sum(px) / len(px)
     if pale > PALE_HARD:
