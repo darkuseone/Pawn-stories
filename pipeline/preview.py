@@ -72,7 +72,14 @@ def pale_share(im: Image.Image) -> float:
     изображение предмета, о котором идёт речь.
     """
     small = im.convert("L").resize((64, 36))
-    px = list(small.getdata())
+    # getdata() объявлен устаревшим в Pillow и на каждый вызов печатает
+    # предупреждение. На сотне файлов это двести строк мусора в логе, из-за
+    # которых полезный вывод отбраковки уезжает за границу видимости —
+    # я дважды вытаскивал логи вслепую именно поэтому.
+    try:
+        px = list(small.get_flattened_data())
+    except AttributeError:
+        px = list(small.getdata())
     return sum(1 for p in px if p > 224) / len(px)
 
 
