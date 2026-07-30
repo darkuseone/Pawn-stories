@@ -119,8 +119,34 @@ def render_clip(image: Path, out: Path, move: str, speed: float, dur: float,
     run(cmd)
 
 
+# Движение камеры ПО ГОТОВОМУ ВИДЕО. Отдельно от MOVES: те выставлены под
+# холст в 3000 пикселей, а сток приходит в 1920 — те же амплитуды означали бы
+# растяжение вдвое и мыло. Здесь ход мягкий, до 8%: клип и так живой, задача
+# не «оживить», а СДЕЛАТЬ ПОВТОР НЕУЗНАВАЕМЫМ. Один и тот же кусок, взятый
+# вторым разом с медленным наездом вместо статики, читается как другой кадр.
+FOOTAGE_MOVES = {
+    "drift_in":    dict(z0=1.00, z1=1.08, x0=0.5, x1=0.5, y0=0.5, y1=0.5),
+    "drift_out":   dict(z0=1.08, z1=1.00, x0=0.5, x1=0.5, y0=0.5, y1=0.5),
+    "drift_left":  dict(z0=1.07, z1=1.07, x0=0.72, x1=0.28, y0=0.5, y1=0.5),
+    "drift_right": dict(z0=1.07, z1=1.07, x0=0.28, x1=0.72, y0=0.5, y1=0.5),
+    "drift_up":    dict(z0=1.07, z1=1.07, x0=0.5, x1=0.5, y0=0.70, y1=0.30),
+}
+
+
+def footage_motion(move: str, dur: float) -> str:
+    """Цепочка плавного хода камеры поверх уже приведённого кадра 1920x1080."""
+    m = FOOTAGE_MOVES[move]
+    p = f"(3*pow(min(t/{dur:.3f},1),2)-2*pow(min(t/{dur:.3f},1),3))"
+    w0, w1 = W * m["z0"], W * m["z1"]
+    wexpr = f"trunc(({w0:.1f}+({w1 - w0:.1f})*{p})/2)*2"
+    xexpr = f"(iw-{W})*({m['x0']:.3f}+({m['x1'] - m['x0']:.3f})*{p})"
+    yexpr = f"(ih-{H})*({m['y0']:.3f}+({m['y1'] - m['y0']:.3f})*{p})"
+    return (f"scale=w='{wexpr}':h=-2:eval=frame,"
+            f"crop={W}:{H}:x='{xexpr}':y='{yexpr}'")
+
+
 def render_footage_clip(src: Path, out: Path, dur: float, start: float = 0.0,
-                        effect=None):
+                        effect=None, move=None):
     """
     Стоковый футаж: обрезка, приведение к 1920x1080/25fps, без звука.
 
@@ -128,9 +154,16 @@ def render_footage_clip(src: Path, out: Path, dur: float, start: float = 0.0,
     против кадра до 22), и без петли на выходе получается файл короче
     заказанного. Дальше xfade просит кадры за его концом и обрывает всю
     группу склейки без единой ошибки в логе.
+
+    move — необязательный ход камеры. Ставится на ПОВТОРНЫХ показах клипа,
+    см. FOOTAGE_MOVES: материала по узким темам мало, повтор неизбежен, и
+    дешевле сделать его незаметным, чем оставить дыру в ролике.
     """
-    vf = with_effect(f"scale={W}:{H}:force_original_aspect_ratio=increase,"
-                     f"crop={W}:{H},fps={FPS},setsar=1", effect)
+    base = (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+            f"crop={W}:{H}")
+    if move:
+        base += "," + footage_motion(move, dur)
+    vf = with_effect(f"{base},fps={FPS},setsar=1", effect)
     cmd = (f"ffmpeg -y -stream_loop -1 -ss {start:.2f} -i {shlex.quote(str(src))} "
            f"-vf {shlex.quote(vf)} -t {dur:.3f} "
            f"-c:v libx264 -crf 18 -preset veryfast "
