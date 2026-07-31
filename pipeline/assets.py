@@ -468,6 +468,24 @@ def src_nasa(q, n, media="image"):
     return out
 
 
+def short_query(q: str, keep: int = 2) -> str:
+    """
+    Две-три главные слова вместо полной фразы.
+
+    Стоки ищут по ИЛИ и от длинной фразы только шире выдачу. Архивы —
+    наоборот, ищут полнотекстово по описанию, и фраза из пяти слов в
+    коллекции на несколько тысяч единиц не находит НИЧЕГО. Замер на
+    ff-ep03: archive_org и wikimedia_video отдали по нулю на всех
+    десяти запросах, ни разу не пожаловавшись — потому что жаловаться
+    было не на что, ответ был честный и пустой.
+    """
+    stop = {"closeup", "close", "up", "detail", "shot", "old", "the", "and",
+            "with", "overcast", "dawn", "sunset"}
+    ws = [w for w in re.findall(r"[a-zA-Z]+", q.lower())
+          if len(w) > 3 and w not in stop]
+    return " ".join(ws[:keep]) if ws else q
+
+
 def src_archive_org(q, n):
     """
     Хроника из archive.org/details/movies.
@@ -482,7 +500,7 @@ def src_archive_org(q, n):
     """
     r = requests.get("https://archive.org/advancedsearch.php", timeout=TIMEOUT,
                      headers=UA,
-                     params={"q": f'{q} AND mediatype:(movies) AND '
+                     params={"q": f'{short_query(q)} AND mediatype:(movies) AND '
                                   f'(collection:(prelinger) OR '
                                   f'collection:(publicmoviescollection) OR '
                                   f'licenseurl:(*publicdomain*))',
@@ -672,7 +690,7 @@ def src_wikimedia_video(q, n):
     r = requests.get("https://commons.wikimedia.org/w/api.php", timeout=TIMEOUT,
                      headers=UA,
                      params={"action": "query", "generator": "search",
-                             "gsrsearch": f"{q} filetype:video",
+                             "gsrsearch": f"{short_query(q)} filetype:video",
                              "gsrlimit": n * 2, "prop": "imageinfo",
                              "iiprop": "url|extmetadata|size",
                              "format": "json"})
