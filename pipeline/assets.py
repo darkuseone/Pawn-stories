@@ -784,7 +784,13 @@ def check_keys():
 
     probe("XAI_API_KEY", "https://api.x.ai/v1/models",
           {"Authorization": f"Bearer {xai}"})
-    probe("PEXELS_API_KEY", "https://api.pexels.com/v1/search",
+    # ПРОВЕРЯЕМ ИМЕННО ВИДЕО. Раньше здесь стоял /v1/search — поиск по
+    # фотографиям, которым мы не пользуемся вовсе: Pexels берётся только под
+    # футаж. Ключ отвечал на фото 200 «принят», а на /videos/search — 401
+    # «Invalid API key», и проверка бодро рапортовала об исправном ключе,
+    # пока источник не отдавал ни одного ролика. Проверять надо ту дверь,
+    # в которую собираешься входить.
+    probe("PEXELS_API_KEY", "https://api.pexels.com/videos/search",
           {"Authorization": pex}, {"query": "test", "per_page": 1})
     probe("PIXABAY_API_KEY", "https://pixabay.com/api/",
           None, {"key": pix, "q": "test", "per_page": 3})
