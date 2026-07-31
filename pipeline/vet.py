@@ -237,6 +237,15 @@ visibly old, ornate, or clearly the antique/relic itself — a plain pale \
 wooden board being sanded is NOT that, even though "workshop" sounds like it \
 should fit.
 
+REJECT ALSO any 3D-rendered, CGI, or motion-graphics treatment of money — \
+cryptocurrency coins (Bitcoin, Ethereum and the like), glossy CGI coin \
+stacks, floating or spinning rendered coins, animated currency symbols, \
+piggy banks, banknote graphics, stock-market or finance imagery. These read \
+as "gold coins" at a glance and are the single most common false accept: a \
+video about a buried hoard cannot show a rendered Bitcoin. Real photographed \
+historic coins are fine; anything that looks computer-generated or modern \
+financial is not.
+
 Answer with STRICT JSON and nothing else:
 {{"keep": true or false, "why": "at most 12 words", "what": "what you see, at most 8 words"}}"""
 
