@@ -41,6 +41,8 @@
  "vet_vision": true,
  "photo_sources": [
   "met",
+  "artic",
+  "cleveland",
   "loc",
   "wikimedia"
  ],

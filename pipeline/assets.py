@@ -14,6 +14,7 @@ assets.py — собирает всё, из чего потом монтируе
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -32,6 +33,47 @@ TIMEOUT = 60
 MAX_FILE_BYTES = 120 * 1024 * 1024      # 120 МБ на файл
 FETCH_SECONDS = 90                      # столько ждём один файл
 GATHER_BUDGET = 420                     # столько всего на один сбор
+
+# ПОТОЛОК НА ДЛИНУ И РАЗРЕШЕНИЕ ФУТАЖА.
+#
+# Ролику от стокового клипа нужны отрывки по 2-15 секунд, и ClipCutter всё
+# равно режет файл на куски. Держать ради этого минутный ролик в 4K — значит
+# впустую занимать кэш и упираться в потолок Releases в 2 ГБ: на прошлом
+# прогоне кэш материала весил 1.06 ГБ при 91 клипе.
+#
+# Поэтому: качаем рендер 720p-1080p (не 4K), клипы длиннее 25 секунд
+# подрезаем на диске сразу после скачивания. Обрезка идёт БЕЗ
+# перекодирования, потоковым копированием — это секунды на файл и никакой
+# потери качества.
+MAX_CLIP_SECONDS = 25
+CLIP_MIN_WIDTH = 1280                   # ниже 720p не берём — заметно на экране
+CLIP_MAX_WIDTH = 1920                   # выше 1080p не нужно, только вес
+
+
+def trim_long_clip(path: Path, limit: float = MAX_CLIP_SECONDS) -> None:
+    """Подрезает скачанный клип до потолка. Тихо ничего не делает, если короче."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                        "format=duration", "-of", "csv=p=0", str(path)],
+                       capture_output=True, text=True)
+    try:
+        dur = float(r.stdout.strip())
+    except ValueError:
+        return
+    if dur <= limit + 0.5:
+        return
+    tmp = path.with_suffix(".trim.mp4")
+    # -c copy режет по ближайшему ключевому кадру: не по-кадрово точно, но
+    # для отрывка из середины стока это безразлично, зато мгновенно.
+    res = subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(path), "-t", f"{limit:.2f}",
+         "-c", "copy", "-an", str(tmp)], capture_output=True)
+    if res.returncode == 0 and tmp.exists() and tmp.stat().st_size > 20000:
+        was = path.stat().st_size // 1048576
+        tmp.replace(path)
+        log(f"    подрезан с {dur:.0f} до {limit:.0f} с "
+            f"({was} -> {path.stat().st_size // 1048576} МБ)")
+    else:
+        tmp.unlink(missing_ok=True)
 
 
 def log(*a):
@@ -315,10 +357,12 @@ def src_pexels(q, n):
                      params={"query": q, "per_page": n, "orientation": "landscape"})
     if not ok(r, "pexels", q):
         return []
-    out, dropped = [], 0
+    out, dropped, longish = [], 0, 0
     for v in r.json().get("videos", []):
+        # 720p-1080p: 4K-рендер весит вчетверо и на 1080p-выходе не виден
         files = [f for f in v["video_files"]
-                 if f.get("width", 0) >= 1280 and f.get("link")]
+                 if CLIP_MIN_WIDTH <= f.get("width", 0) <= CLIP_MAX_WIDTH
+                 and f.get("link")]
         if not files:
             continue
         # у Pexels нет поля тегов, но есть человекочитаемый адрес страницы
@@ -326,9 +370,17 @@ def src_pexels(q, n):
         if not relevant(q, (v.get("url") or "").replace("-", " ")):
             dropped += 1
             continue
+        # длинные ролики не берём вовсе: качать минуту ради пятисекундной
+        # перебивки — это только вес кэша
+        if int(v.get("duration") or 0) > MAX_CLIP_SECONDS * 2:
+            longish += 1
+            continue
         best = sorted(files, key=lambda f: abs(f["width"] - 1920))[0]
         out.append({"url": best["link"], "src": "pexels",
                     "dur": v.get("duration", 0), "kind": "video"})
+    if longish:
+        log(f"    pexels «{q}»: отсеяно {longish} длиннее "
+            f"{MAX_CLIP_SECONDS * 2} с")
     if dropped:
         log(f"    pexels «{q}»: отсеяно {dropped} не по теме")
     return out
@@ -368,17 +420,31 @@ def src_pixabay(q, n):
                      params={"key": k, "q": q, "per_page": max(n, 3)})
     if not ok(r, "pixabay", q):
         return []
-    out, dropped = [], 0
+    out, dropped, longish = [], 0, 0
     for v in r.json().get("hits", []):
         vv = v.get("videos", {})
-        link = (vv.get("large") or vv.get("medium") or {}).get("url")
+        # medium у Pixabay это как раз 1280x720, large — 1920x1080.
+        # Берём подходящий под потолок, а не самый большой.
+        pick = None
+        for name in ("large", "medium", "small"):
+            f = vv.get(name) or {}
+            if f.get("url") and CLIP_MIN_WIDTH <= (f.get("width") or 0) <= CLIP_MAX_WIDTH:
+                pick = f
+                break
+        link = (pick or {}).get("url") or (vv.get("medium") or {}).get("url")
         if not link:
             continue
         if not relevant(q, v.get("tags", "")):
             dropped += 1
             continue
+        if int(v.get("duration") or 0) > MAX_CLIP_SECONDS * 2:
+            longish += 1
+            continue
         out.append({"url": link, "src": "pixabay",
                     "dur": v.get("duration", 0), "kind": "video"})
+    if longish:
+        log(f"    pixabay «{q}»: отсеяно {longish} длиннее "
+            f"{MAX_CLIP_SECONDS * 2} с")
     if dropped:
         log(f"    pixabay «{q}»: отсеяно {dropped} не по теме")
     return out
@@ -403,11 +469,23 @@ def src_nasa(q, n, media="image"):
 
 
 def src_archive_org(q, n):
-    """Хроника. Фильтр по лицензии: только явное общественное достояние."""
+    """
+    Хроника из archive.org/details/movies.
+
+    ФИЛЬТР ПЕРЕПИСАН. Раньше стояло `licenseurl:(*publicdomain*)` — поле,
+    которое у большинства записей просто не заполнено, и источник отдавал
+    ноль на каждом запросе (замерено на ff-ep03: archive_org 0 из 94).
+    Теперь берём коллекции, которые ЦЕЛИКОМ в общественном достоянии:
+    Prelinger — эталонный архив рекламной и бытовой хроники XX века,
+    plus явно помеченные publicdomain. Это и честнее по правам, и на
+    порядок урожайнее.
+    """
     r = requests.get("https://archive.org/advancedsearch.php", timeout=TIMEOUT,
                      headers=UA,
                      params={"q": f'{q} AND mediatype:(movies) AND '
-                                  f'licenseurl:(*publicdomain*)',
+                                  f'(collection:(prelinger) OR '
+                                  f'collection:(publicmoviescollection) OR '
+                                  f'licenseurl:(*publicdomain*))',
                              "fl[]": "identifier", "rows": n * 2,
                              "output": "json"})
     if not ok(r, "archive.org", q):
@@ -437,6 +515,84 @@ def src_archive_org(q, n):
             out.append({
                 "url": f"https://archive.org/download/{ident}/{vids[0]['name']}",
                 "src": "archive.org", "kind": "video"})
+        if len(out) >= n:
+            break
+    return out
+
+
+def src_artic(q, n):
+    """
+    Художественный институт Чикаго. Ключ не нужен, отдаёт общественное
+    достояние. Предметный музей: по запросу про фарфор отдаёт фарфор,
+    а не обмеры зданий, — то самое, чего не хватало от Library of Congress.
+    """
+    r = requests.get("https://api.artic.edu/api/v1/artworks/search",
+                     timeout=TIMEOUT, headers=UA,
+                     params={"q": q, "limit": n * 2,
+                             "fields": "id,image_id,is_public_domain,title"})
+    if not ok(r, "artic", q):
+        return []
+    out = []
+    for it in r.json().get("data", []):
+        if not it.get("is_public_domain") or not it.get("image_id"):
+            continue
+        out.append({
+            "url": f"https://www.artic.edu/iiif/2/{it['image_id']}"
+                   f"/full/1686,/0/default.jpg",
+            "src": "artic", "kind": "image"})
+        if len(out) >= n:
+            break
+    return out
+
+
+def src_cleveland(q, n):
+    """
+    Кливлендский музей искусств. Ключ не нужен, cc0=1 отдаёт только то,
+    что можно брать без атрибуции. Сильная коллекция прикладного искусства:
+    металл, часы, оружие, керамика.
+    """
+    r = requests.get("https://openaccess-api.clevelandart.org/api/artworks/",
+                     timeout=TIMEOUT, headers=UA,
+                     params={"q": q, "cc0": 1, "has_image": 1, "limit": n * 2})
+    if not ok(r, "cleveland", q):
+        return []
+    out = []
+    for it in r.json().get("data", []):
+        img = ((it.get("images") or {}).get("web") or {}).get("url")
+        if img:
+            out.append({"url": img, "src": "cleveland", "kind": "image"})
+        if len(out) >= n:
+            break
+    return out
+
+
+def src_nasa_video(q, n):
+    """
+    images.nasa.gov, видео. Ключ не нужен, всё в общественном достоянии.
+
+    Для канала про древности это боковой источник: НАСА отдаёт космос и
+    технику. Держим его доступным по имени, но в умолчания не ставим — по
+    предметным запросам он даёт шум, и это уже проверено на фотографиях.
+    """
+    r = requests.get("https://images-api.nasa.gov/search", timeout=TIMEOUT,
+                     headers=UA, params={"q": q, "media_type": "video"})
+    if not ok(r, "nasa_video", q):
+        return []
+    out = []
+    for it in (r.json().get("collection", {}).get("items") or [])[:n * 2]:
+        href = it.get("href")
+        if not href:
+            continue
+        try:
+            files = requests.get(href, timeout=30, headers=UA).json()
+        except Exception:
+            continue
+        # в списке лежат рендеры разного размера; берём мобильный/средний,
+        # оригиналы бывают по несколько гигабайт
+        pick = [f for f in files if f.endswith(".mp4") and "~mobile" in f] or \
+               [f for f in files if f.endswith(".mp4")]
+        if pick:
+            out.append({"url": pick[0], "src": "nasa", "kind": "video"})
         if len(out) >= n:
             break
     return out
@@ -555,18 +711,26 @@ def src_wikimedia_video(q, n):
 # Wikimedia не дала ничего: фильтр лицензий отсекает почти всё, что она
 # находит по предметным запросам.
 ALL_SOURCES = {
+    # видео
     "pexels": src_pexels,
     "pixabay": src_pixabay,
     "archive_org": src_archive_org,
     "wikimedia_video": src_wikimedia_video,
-    "nasa": src_nasa,
+    "nasa_video": src_nasa_video,
+    # фото
     "met": src_met,
+    "artic": src_artic,
+    "cleveland": src_cleveland,
     "loc": src_loc,
     "wikimedia": src_wikimedia,
+    "nasa": src_nasa,
 }
 
 VIDEO_SOURCES = [src_pexels, src_pixabay, src_archive_org, src_wikimedia_video]
-PHOTO_SOURCES = [src_met, src_loc, src_wikimedia]
+# Met, Чикаго и Кливленд идут первыми: все три — предметные музеи, и по
+# предметному запросу отдают предмет. Library of Congress оставлен следом,
+# но он же и главный поставщик книжных обложек, которые потом бракует зрение.
+PHOTO_SOURCES = [src_met, src_artic, src_cleveland, src_loc, src_wikimedia]
 
 
 def sources_from(job, key, default):
@@ -679,6 +843,11 @@ def gather(queries, per_query, sources, out: Path, kind, budget=GATHER_BUDGET):
                 ext = ".mp4" if it["kind"] == "video" else ".jpg"
                 dst = out / f"{kind}_{n:03d}_{it['src']}{ext}"
                 if fetch(it["url"], dst):
+                    # Видео подрезаем СРАЗУ. Дальше файл живёт в кэше между
+                    # прогонами, и лишние секунды в нём — это лишние
+                    # мегабайты на каждой пересборке.
+                    if it["kind"] == "video":
+                        trim_long_clip(dst)
                     # запрос сохраняется рядом с файлом: по нему build.py потом
                     # подбирает кадр под то, что звучит в эту секунду
                     got.append({"file": str(dst), "q": q, **it})
