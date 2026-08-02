@@ -176,6 +176,21 @@ def entry_from(job, style_card: dict, test=False):
         "base_duration": style_card.get("base_duration"),
         "generated_share": style_card.get("generated_share"),
         "thumb_style": style_card.get("thumb_style"),
+        "arc": style_card.get("arc"),
+        # ВЕКТОР СТИЛЯ ЦЕЛИКОМ. Главное, что здесь появилось: без него
+        # разведение роликов невозможно в принципе. Поосевые поля выше
+        # умеют сказать «этот LUT уже был», но не умеют сказать «этот ролик
+        # похож на прошлый», а похожесть — свойство сочетания, а не поля.
+        # Читает editorial/memory.py.
+        "style_vector": style_card.get("style_vector") or {},
+        # Метрики готового плана. Нужны не движку, а человеку: по ряду из
+        # десяти роликов видно дрейф — если у всех подряд одинаковый
+        # разброс длительностей, генератор где-то заклинило, и ни одна
+        # поосевая проверка этого не покажет.
+        "plan_metrics": style_card.get("plan_metrics") or {},
+        # Что из общего пула стока и архива уже показано. Следующий ролик
+        # начнёт подбор с гандикапом на эти файлы, см. ShotPicker.prior.
+        "assets_used": style_card.get("assets_used") or {},
         **({"test": True} if test else {}),
     }
 

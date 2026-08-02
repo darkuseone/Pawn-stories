@@ -179,8 +179,50 @@ def concat_segments(segments, out: Path):
         f"-c copy {shlex.quote(str(out))}")
 
 
+# Сколько плавно уводится подложка: секунда на вход в яму и секунда на
+# выход. Резкий уход слышен как обрыв дорожки, слишком плавный не читается
+# как решение — секунда это середина, проверенная на слух.
+DUCK_RAMP = 1.0
+
+# Больше 24 ям выражение volume становится длиннее, чем ffmpeg готов
+# разбирать без заметной паузы на старте. На получасовом ролике это
+# примерно яма на минуту — больше и не нужно.
+DUCK_MAX = 24
+
+
+def duck_expression(points, depth: float) -> str:
+    """
+    Выражение громкости подложки с ямами в заданных точках.
+
+    Зачем вообще ямы. Подложка на постоянном уровне — это фон, зритель
+    перестаёт её слышать через минуту. Подложка, которая уходит под важной
+    фразой и возвращается после неё, работает как знак препинания: место,
+    где музыка расступилась, зритель запоминает. Это ровно то решение,
+    которое на монтаже принимает человек, и оно ничего не стоит.
+
+    points — [(секунда, длительность)]. depth 0..1: доля, на которую
+    подложка приседает (0.6 значит «до 40% громкости»).
+
+    Форма ямы — трапеция: вход, дно, выход. Считается как произведение
+    множителей, поэтому пересекающиеся ямы углубляют друг друга, а не
+    спорят между собой.
+    """
+    if not points or depth <= 0:
+        return ""
+    parts = []
+    for t0, dur in list(points)[:DUCK_MAX]:
+        a, b = float(t0), float(t0) + max(float(dur), DUCK_RAMP * 2 + 0.2)
+        r = DUCK_RAMP
+        # трапеция 0..1: поднимается за r, держится, спадает за r
+        shape = (f"max(0\\,min(1\\,min((t-{a:.2f})/{r:.2f}\\,"
+                 f"({b:.2f}-t)/{r:.2f})))")
+        parts.append(f"(1-{depth:.3f}*{shape})")
+    return "*".join(parts)
+
+
 def build_audio(voice: Path, bed, out: Path, total: float,
-                bed_gain_db: float = -26.0):
+                bed_gain_db: float = -26.0, duck_points=None,
+                duck_depth: float = 0.0):
     """
     Голос + фоновая подложка. bed=None — только голос.
 
@@ -220,9 +262,15 @@ def build_audio(voice: Path, bed, out: Path, total: float,
         f"afade=t=out:st={st_out:.2f}:d={fade_out:.2f}' "
         f"-c:a aac -b:a 160k {shlex.quote(str(tmp))}")
 
+    # Ямы подложки. eval=frame обязателен: без него выражение посчитается
+    # один раз на нулевой секунде, и вместо ям получится ровный уровень —
+    # причём тот, что выпал в точке t=0, то есть чаще всего просто тише.
+    duck = duck_expression(duck_points, duck_depth)
+    duck_f = f"volume='{duck}':eval=frame," if duck else ""
+
     # Оба входа приводятся к стерео ДО amix: иначе он берёт раскладку по
     # первому входу, а первый — моно-начитка, и подложка теряет ширину.
-    filt = (f"[1:a]volume={bed_gain_db}dB,"
+    filt = (f"[1:a]volume={bed_gain_db}dB,{duck_f}"
             f"aformat=channel_layouts=stereo:sample_rates=48000[bed];"
             f"[0:a]aformat=channel_layouts=stereo:sample_rates=48000[voc];"
             f"[voc][bed]amix=inputs=2:duration=first:dropout_transition=0,"

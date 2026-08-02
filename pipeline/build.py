@@ -35,6 +35,10 @@ import render
 import vet
 import style as style_mod
 from render import W, H, FPS
+from editorial import beats as beats_mod
+from editorial import pacing as pacing_mod
+from editorial import memory as memory_mod
+from editorial import rails, textcard, edl
 
 ROOT = Path(__file__).parent.parent
 LUTS = ROOT / "assets" / "luts"
@@ -179,7 +183,14 @@ class ShotPicker:
     def __bool__(self):
         return bool(self.pool)
 
-    def __init__(self, pool, total: float):
+    # Насколько тяжело весит показ файла В ПРОШЛЫХ РОЛИКАХ по сравнению с
+    # показом в этом. Половина: файл, отработавший в прошлой загрузке, не
+    # запрещён — он просто уступает свежему при прочих равных. Полный вес
+    # означал бы, что удачный клип нельзя показать во второй раз никогда,
+    # а материала на канале конечное количество.
+    PRIOR_WEIGHT = 0.5
+
+    def __init__(self, pool, total: float, prior=None):
         # pool: [(path, tag, keywords), ...]
         self.pool = pool
         self.total = max(total, 0.001)
@@ -191,6 +202,22 @@ class ShotPicker:
         # показ. По нему монтаж решает, вешать ли на клип ход камеры.
         self.last_repeat = 0
 
+        # ПАМЯТЬ МЕЖДУ РОЛИКАМИ. Износ внутри ролика (см. score) спасает от
+        # шести показов одной вазы в одном ролике, но ничего не знает про
+        # прошлые загрузки: пул стока и архива у канала общий, и клип,
+        # годный по теме, выигрывает подбор в каждом ролике подряд. Зритель
+        # канала видит одну и ту же врезку в трёх видео и справедливо
+        # называет это конвейером.
+        #
+        # Здесь счётчик приезжает из журнала канала и садится в стартовые
+        # показы. Ключ — имя файла: полные пути у каждого ролика свои.
+        prior = prior or {}
+        self.prior = {}
+        for j, (path, _tag, _kw) in enumerate(pool):
+            n = prior.get(Path(path).name, 0)
+            if n:
+                self.prior[j] = n * self.PRIOR_WEIGHT
+
     def take(self, t: float, text: str = ""):
         n = len(self.pool)
         if not n:
@@ -201,7 +228,8 @@ class ShotPicker:
 
         def score(j):
             path, _tag, kw = self.pool[j]
-            used = self.used.get(j, 0)
+            # показы в этом ролике плюс половина показов в прошлых
+            used = self.used.get(j, 0) + self.prior.get(j, 0.0)
             # СМЫСЛОВОЕ СОВПАДЕНИЕ ГАСНЕТ ОТ ПОКАЗОВ.
             #
             # Раньше overlap стоял в ключе выше счётчика показов, и файл,
@@ -231,8 +259,15 @@ class ShotPicker:
     def report(self):
         if not self.calls:
             return "не использовался"
+        carried = sum(1 for v in self.prior.values() if v)
+        tail = f", {carried} файлов уже шли в эфир" if carried else ""
         return (f"{self.hits} из {self.calls} кадров подобраны по смыслу "
-                f"({self.hits/self.calls*100:.0f}%)")
+                f"({self.hits/self.calls*100:.0f}%){tail}")
+
+    def used_names(self):
+        """Имена показанных файлов и число показов — для журнала канала."""
+        return {Path(self.pool[j][0]).name: n
+                for j, n in self.used.items() if n}
 
     def exhausted(self, cap: int) -> bool:
         """Правда, когда КАЖДЫЙ файл в пуле уже показан cap раз и больше.
@@ -388,13 +423,74 @@ def keywords_for(assets: Path, job):
     return out
 
 
+def opening_plan(st, intro_start, intro_end):
+    """
+    Как обходится ВСТУПЛЕНИЕ при выпавшем типе открытия.
+
+    Вынесено отдельно, потому что раньше это был самый заметный шаблон
+    канала: поле opening вычислялось, защищалось от повторов, печаталось в
+    сводку — и применялось ровно в двух местах из шести возможных. Все
+    ролики открывались почти одинаково.
+
+    Ни один вариант не двигает таймлайн: меняется раскладка кусков внутри
+    вступления, а не его длина. Сдвиг здесь стоил бы рассинхрона звука на
+    весь ролик.
+    """
+    o = st.opening
+    p = dict(first_long=None, tight_until=0.0, tight_factor=1.0,
+             ramp_until=0.0, first_is_clip=False, end=intro_end)
+
+    if o == "long_establish":
+        # один установочный кадр, потом перебивка — «выдох» перед бегом
+        p["first_long"] = (5.5, 8.5)
+    elif o == "quick_cuts":
+        # первые четырнадцать секунд — самый короткий возможный шаг
+        p["tight_until"] = intro_start + 14.0
+        p["tight_factor"] = 0.30
+    elif o == "cold_open":
+        # без разгона вовсе: всё вступление на коротком шаге
+        p["tight_until"] = intro_end
+        p["tight_factor"] = 0.45
+    elif o == "slow_reveal":
+        # длинный медленный первый кадр, потом двадцать секунд разгона
+        p["first_long"] = (6.0, 9.0)
+        p["ramp_until"] = intro_start + 20.0
+    elif o == "hard_in":
+        # открывает видео на полном темпе, вступление короче обычного
+        p["first_is_clip"] = True
+        p["tight_until"] = intro_start + 8.0
+        p["tight_factor"] = 0.35
+        p["end"] = intro_start + (intro_end - intro_start) * 0.7
+    # black_card ничего не меняет в раскладке: проявление из чёрного
+    # делается фильтром на первой группе склейки, см. join()
+    return p
+
+
 def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     """
     Раскладывает материал по таймлайну.
 
-    Ключевое: кадр всегда заканчивается на границе предложения.
-    Робот копит предложения, пока не наберётся нужная длительность,
-    и режет там. Поэтому склейки попадают в паузы речи.
+    ДВА РЕЖИМА, и это принципиально.
+
+    Вступление режется НЕ по предложениям. Предложение у диктора длится в
+    среднем пять с половиной секунд, а во вступлении нужны куски по две-
+    четыре — уложить их в границы предложений физически нельзя.
+
+    Тело режется по предложениям И ПО НАРРАТИВНЫМ ДОЛЯМ. Раньше здесь
+    работала одна формула на весь ролик: база плюс замедление к финалу.
+    Формула честная, но ФОРМА КРИВОЙ у всех загрузок канала была одна, и
+    её видно на графике длительностей даже когда всё остальное разное.
+    Теперь длительность просит editorial/pacing.py, а он смотрит на замысел
+    доли из editorial/beats.py: под нагнетанием кадры укорачиваются, под
+    развязкой стоят долго, после сильного куска ставится выдох.
+
+    Границы кадров при этом по-прежнему падают на концы предложений: смена
+    кадра в паузе речи читается как решение монтажёра, посреди фразы — как
+    сбой. Это правило не менялось и меняться не должно.
+
+    Возвращает список кадров. Разбор и кривые остаются на объекте st
+    (st.beats, st.pacing) — оттуда их забирают проверка плана и монтажный
+    лист, чтобы не считать одно и то же дважды.
     """
     def keep(paths, kind, rejected):
         """Выкидывает забракованное — роботом в vet.py или руками в reject."""
@@ -442,9 +538,38 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         except (IndexError, ValueError):
             return set()
 
-    gen_pick = ShotPicker([(p, "gen", kw_of(p)) for p in images], total)
-    arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total)
-    clip_pick = ShotPicker([(p, "clip", kw_of(p)) for p in clips], total)
+    # Сколько раз каждый файл уже показывали В ПРОШЛЫХ роликах канала.
+    # Внутрь ShotPicker это садится половинным весом: не запрет, а гандикап.
+    prior = memory_mod.used_assets()
+    if prior:
+        log(f"  память канала: {len(prior)} файлов уже шли в эфир")
+
+    gen_pick = ShotPicker([(p, "gen", kw_of(p)) for p in images], total, prior)
+    arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total, prior)
+    clip_pick = ShotPicker([(p, "clip", kw_of(p)) for p in clips], total, prior)
+
+    # ── РАЗБОР СЦЕНАРИЯ НА ДОЛИ ──────────────────────────────────────
+    # Считается по тайм-кодам и по тексту, без единого запроса к модели:
+    # разбор идёт на каждой пересборке монтажа, а пересборок у ролика пять
+    # -десять. Платный разбор означал бы, что правка одной склейки стоит
+    # как новый ролик.
+    script_blocks = (job or {}).get("script_blocks") or []
+    story = beats_mod.analyze(marks, script_blocks, total)
+    for row in beats_mod.report(story):
+        log(row)
+    pace = pacing_mod.Pacing(st.rng, story, total, st.base_dur,
+                             arc_name=st.arc, breath_rate=st.breath_rate)
+    for row in pace.report():
+        log(row)
+    # оставляем на движке: их заберут проверка плана и монтажный лист
+    st.beats, st.pacing = story, pace
+
+    def beat_at(t: float):
+        """Доля, накрывающая секунду t, и её номер. Хвост — последней доле."""
+        for n, b in enumerate(story):
+            if b.start - 0.01 <= t < b.end:
+                return n, b
+        return (len(story) - 1, story[-1]) if story else (0, None)
 
     clip_cap_hit = [False]
 
@@ -510,12 +635,21 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     # --- вступление ---
     t = marks[0]["start"] if marks else 0.0
     intro_start = t
+    op = opening_plan(st, intro_start, intro_end)
+    intro_end = op["end"]
+    log(f"  открытие: {st.opening}, вступление до {intro_end:.0f} с")
+
     run_kind, run_len = None, 0
     while t < intro_end:
         # чередуем видео и фото, но не даём трём одинаковым идти подряд
         want_clip = st.rng.random() < st.intro_clip_share and clip_available()
         if run_len >= 2:
             want_clip = run_kind != "clip" and clip_available()
+        # hard_in открывает стоковым видео: ролик стартует движением, а не
+        # фотографией. Если стока нет, правило молча уступает — вступление
+        # из одних фотографий лучше, чем отсутствие вступления.
+        if idx == 0 and op["first_is_clip"] and clip_available():
+            want_clip = True
         kind = "clip" if want_clip else "image"
         run_len = run_len + 1 if kind == run_kind else 1
         run_kind = kind
@@ -524,23 +658,23 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
                     else st.intro_photo_duration_range)
         dur = round(st.rng.uniform(*rng_pair), 3)
 
-        # ТИП ОТКРЫТИЯ. Первые секунды решают, останется зритель или нет, и
-        # именно они у всех роликов канала были одинаковыми: поле opening
-        # вычислялось, но нигде не применялось. Три варианта расходятся
-        # только длительностями первых кадров и проявлением из чёрного —
-        # таймлайн при этом не сдвигается ни на кадр, поэтому звук остаётся
-        # на месте (сдвиг здесь стоил бы рассинхрона на весь ролик).
-        if idx == 0 and st.opening == "long_footage":
-            # один установочный кадр, потом перебивка — «выдох» перед бегом
-            dur = round(st.rng.uniform(5.5, 8.5), 3)
-        elif st.opening == "quick_cuts" and t < intro_start + 14.0:
-            # первые четырнадцать секунд — самый короткий возможный шаг
-            lo = rng_pair[0]
-            dur = round(min(dur, lo + (rng_pair[1] - lo) * 0.3), 3)
-        tr = st.rng.choice(st.transitions)
+        # ТИП ОТКРЫТИЯ, шесть вариантов вместо прежних трёх. Расходятся они
+        # длительностями первых кадров, первым материалом и проявлением из
+        # чёрного; таймлайн при этом не сдвигается ни на кадр, поэтому звук
+        # остаётся на месте (сдвиг стоил бы рассинхрона на весь ролик).
+        lo, hi = rng_pair
+        if idx == 0 and op["first_long"]:
+            dur = round(st.rng.uniform(*op["first_long"]), 3)
+        elif t < op["tight_until"]:
+            dur = round(min(dur, lo + (hi - lo) * op["tight_factor"]), 3)
+        elif t < op["ramp_until"]:
+            # разгон: от длинного шага к короткому за отведённые секунды
+            k = (t - intro_start) / max(op["ramp_until"] - intro_start, 0.1)
+            dur = round(hi - (hi - lo) * min(1.0, k), 3)
+
+        tr, trd = st.pick_transition(short=True)
         # переход во вступлении короткий: длинное растворение съедает
         # весь смысл быстрой перебивки
-        trd = round(st.rng.uniform(*st.intro_transition_duration_range), 2)
 
         # Слот выбран (видео или фото), но чем именно его закрыть — решает
         # пропорция. Во вступлении она работает так же, как в теле: иначе
@@ -554,16 +688,22 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
                               move=repeat_move(clip_pick.last_repeat),
                               start=round(t, 3), duration=dur,
                               transition=tr, transition_dur=trd,
-                              effect=st.effect()))
+                              effect=st.effect(),
+                              beat_kind="hook", why=f"вступление ({st.opening})"))
         else:
+            # Во вступлении по фотографии всегда идёт скольжение или наезд,
+            # статики тут быть не должно. Набор ограничивается ПАРАМЕТРОМ,
+            # а не подменой результата: раньше движение бралось из движка и
+            # перевыбиралось здесь своим жребием, если не подошло, — мимо
+            # счётчика семей. Проверка плана нашла на этом девять наездов
+            # подряд в первых трёх минутах.
+            mv, sp = st.pick_move(1.05, allow_hold=False, only=INTRO_MOVES)
             shots.append(put_image(
                 got, t, said=said_at(t, dur), start=round(t, 3), duration=dur,
-                # во вступлении по фотографии всегда идёт скольжение
-                # или наезд, статики тут быть не должно
-                move=st.rng.choice(INTRO_MOVES),
-                speed=round(st.rng.uniform(0.9, 1.35), 3),
+                move=mv, speed=sp,
                 transition=tr, transition_dur=trd,
-                effect=st.effect()))
+                effect=st.effect(),
+                beat_kind="hook", why=f"вступление ({st.opening})"))
         mix.charge(got, dur)
         t += dur
         idx += 1
@@ -585,20 +725,24 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
 
     # --- тело ---
     #
-    # Оценка числа кадров в теле. Она нужна только затем, чтобы st.clip знала,
-    # насколько ролик близок к финалу, и удлиняла кадры к концу. Раньше сюда
-    # шло len(marks)//3 — число предложений, делённое на три, — и оно
-    # занижало счёт примерно вдвое: при базовом кадре в пять секунд на кадр
-    # приходится меньше двух предложений, а не три. Из-за занижения прогресс
-    # у последних кадров уходил далеко за единицу и замедление разгонялось
-    # втрое против заказанного.
+    # Длительность кадра просит НЕ формула по позиции на таймлайне, а
+    # editorial/pacing.py — он смотрит на замысел доли, на форму арки ролика
+    # и на микроритм внутри доли. Формула осталась запасным путём: если
+    # разбор не дал ни одной доли (пустые тайм-коды, странный сценарий),
+    # план обязан собраться хоть как-то.
     body_seconds = max(total - intro_end, 1.0)
     est_body_shots = max(8, int(body_seconds / max(st.base_dur, 1.0)))
     body_idx = 0
 
     while i < len(marks):
-        is_anchor = idx in anchors
-        cfg = st.clip(body_idx, est_body_shots, is_anchor=is_anchor)
+        start_probe = marks[i]["start"]
+        bi, beat = beat_at(start_probe)
+        if beat is not None:
+            cfg = st.shot_for(beat, pace, bi, start_probe)
+            is_anchor = False        # выдохи из pacing делают ту же работу
+        else:
+            is_anchor = idx in anchors
+            cfg = st.clip(body_idx, est_body_shots, is_anchor=is_anchor)
         want = cfg["duration"]
 
         first = i
@@ -646,18 +790,26 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         # секунд, а сток редко бывает длиннее пятнадцати и уходил бы в петлю.
         # Долгий кадр — это всегда изображение.
         dur = round(end - start, 3)
+        # Доля решает, уместен ли здесь сток вообще. Под развязку сток почти
+        # не идёт: там на экране должен быть конкретный предмет, а не
+        # абстрактные руки в темноте из чужого стока. Под нагнетание,
+        # наоборот, идёт охотно — там нужно движение.
+        beat_wants_clip = (st.rng.random() < pace.clip_share(beat) * 2.0
+                           if beat is not None else True)
         clip_ok = (not is_anchor and since_clip >= next_gap
+                   and beat_wants_clip
                    and dur <= CLIP_MAX_SECONDS and clip_available())
         got = mix.pick((["clip"] if clip_ok else []) + ["gen", "arch"])
 
         said = " ".join(m["text"] for m in marks[first:best + 1])
+        meta = dict(why=cfg.get("why", ""), beat_kind=cfg.get("beat_kind"))
 
         if got == "clip":
             src, _ = clip_pick.take(start, said)
             shots.append(dict(kind="clip", file=src, tag="clip",
                               src_start=cutter.take_start(src, dur),
                               move=repeat_move(clip_pick.last_repeat),
-                              start=start, duration=dur,
+                              start=start, duration=dur, **meta,
                               **{k: cfg[k] for k in
                                  ("transition", "transition_dur", "effect")}))
             since_clip = 0
@@ -666,7 +818,7 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         else:
             since_clip += 1
             shots.append(put_image(
-                got, start, said=said, start=start, duration=dur,
+                got, start, said=said, start=start, duration=dur, **meta,
                 **{k: cfg[k] for k in
                    ("move", "speed", "transition", "transition_dur",
                     "effect")}))
@@ -690,6 +842,12 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     log(f"  подбор: генерация — {gen_pick.report()}")
     log(f"  подбор: архив     — {arch_pick.report()}")
     log(f"  подбор: сток      — {clip_pick.report()}")
+
+    # Что показано и сколько раз — уедет в журнал канала, чтобы следующий
+    # ролик начал подбор с гандикапом на эти файлы. Генерация не считается:
+    # картинки рисуются под конкретный сценарий и в других роликах не
+    # встречаются в принципе.
+    st.assets_used = {**arch_pick.used_names(), **clip_pick.used_names()}
     return shots
 
 
@@ -747,6 +905,39 @@ OVERRIDABLE = {
     # Сжатие: упирается в лимит GitHub Releases в 2 ГБ, см. style.py.
     "crf":                       "crf",
     "preset":                    "preset",
+    # ── оси редакторского слоя ───────────────────────────────────────
+    # Штатно они выпадают жребием и разводятся с историей канала. Здесь
+    # они открыты для ручной правки: иногда под конкретный сюжет нужна
+    # заведомо определённая арка или заведомо отсутствующие плашки, и
+    # переписывать ради этого код не надо.
+    #
+    # ВНИМАНИЕ: жёстко заданная ось перестаёт участвовать в разведении.
+    # Прибив здесь arc и opening, вы вернёте канал ровно к тому состоянию,
+    # из-за которого весь этот слой и появился.
+    "arc":                       "arc",
+    "opening":                   "opening",
+    "motion_amp":                "motion_amp",
+    "motion_bias":               "motion_bias",
+    "framing_bias":              "framing_bias",
+    "transition_focus":          "transition_focus",
+    "shot_spread":               "shot_spread",
+    "breath_rate":               "breath_rate",
+    "text_style":                "text_style",
+    "text_density":              "text_density",
+    "duck_style":                "duck_style",
+    "duck_depth":                "duck_depth",
+}
+
+# Оси со списком допустимых значений. Опечатка должна ронять сборку сразу,
+# а не превращаться в тихо неработающую настройку: именно так поле opening
+# однажды прожило несколько роликов, ни на что не влияя.
+ENUMS = {
+    "arc": tuple(pacing_mod.ARCS),
+    "opening": style_mod.OPENINGS,
+    "motion_bias": tuple(style_mod.MOTION_BIAS),
+    "framing_bias": tuple(style_mod.FRAMING_BIAS),
+    "text_style": ("none",) + textcard.STYLES,
+    "duck_style": ("revelation", "beats", "sparse", "breath"),
 }
 
 # Поля, которые не присваиваются напрямую, а перебрасывают жребий.
@@ -816,6 +1007,10 @@ def apply_style_override(st, job):
                     "style_override.effects: нет таких эффектов " +
                     ", ".join(bad) + "\nесть: " +
                     ", ".join(sorted(style_mod.EFFECTS)))
+        if key in ENUMS and val not in ENUMS[key]:
+            raise SystemExit(
+                f"style_override.{key}: значение {val!r} недопустимо"
+                f"\nесть: " + ", ".join(map(str, ENUMS[key])))
         setattr(st, field, val)
         log(f"  {key} -> {val}")
     return st
@@ -949,7 +1144,29 @@ def film_look():
     )
 
 
-def join(group, out: Path, st, sparks, first=False):
+def text_for_group(group, moments):
+    """
+    Плашки, попадающие в эту группу склейки, с пересчётом в локальное время.
+
+    Группа рендерится отдельным файлом, и время внутри неё идёт от нуля.
+    Абсолютная секунда плашки известна из плана, начало группы — из первого
+    её кадра; разница и есть локальное время. Считать это где-то ещё нельзя:
+    только здесь известно, какие кадры попали в какую группу.
+    """
+    if not moments or not group:
+        return []
+    g0 = group[0]["start"]
+    g1 = group[-1]["start"] + group[-1]["duration"]
+    out = []
+    for m in moments:
+        if g0 <= m["t"] < g1:
+            it = dict(m)
+            it["t_local"] = max(0.0, m["t"] - g0)
+            out.append(it)
+    return out
+
+
+def join(group, out: Path, st, sparks, first=False, moments=None):
     ins = " ".join(f'-i "{c["file"]}"' for c in group)
     if sparks is not None:
         ins += f' -stream_loop -1 -i "{sparks}"'
@@ -1002,6 +1219,12 @@ def join(group, out: Path, st, sparks, first=False):
     # проявление идёт не из черноты, а из коричневой мути.
     if first and st.opening == "black_card":
         post.append("fade=t=in:st=0:d=1.4")
+    # Плашки ставятся ПОСЛЕ виньетки. Иначе виньетка гасит нижние углы, а
+    # плашка стоит именно там — текст уходил бы в тень ровно у той половины
+    # раскладок, где он внизу.
+    chain = textcard.filter_chain(text_for_group(group, moments or []))
+    if chain:
+        post.append(chain)
     post.append("setsar=1")
     fc.append(f'[{last}]' + ",".join(post) + '[out]')
 
@@ -1010,6 +1233,56 @@ def join(group, out: Path, st, sparks, first=False):
            f'-pix_fmt yuv420p -an "{out}"')
     subprocess.run(cmd, shell=True, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def duck_points(st, story, pace):
+    """
+    Где подложка уходит под голос. Возвращает [(секунда, длительность)].
+
+    Четыре манеры, ось duck_style. Разные не ради разного: место, где
+    музыка расступается, зритель запоминает, и если у всех роликов канала
+    она расступается в одинаковых местах — это такая же подпись, как
+    одинаковое открытие.
+
+      revelation  яма на каждой развязке. Самая «документальная» манера:
+                  музыка уходит ровно там, где называют сумму
+      beats       на каждой границе доли. Подложка дышит вместе с
+                  структурой, ям много и они короткие
+      sparse      три-пять ям на весь ролик, глубокие и длинные
+      breath      ямы совпадают с выдохами из pacing.py — музыка молчит
+                  там, где молчит монтаж
+    """
+    if not story:
+        return []
+    style = st.duck_style
+    pts = []
+
+    if style == "revelation":
+        pts = [(b.start, min(b.duration, 14.0))
+               for b in story if b.kind == "revelation"]
+    elif style == "beats":
+        pts = [(b.start, 5.0) for b in story[1:]]
+    elif style == "breath":
+        pts = [(story[i].start, 8.0) for i in sorted(pace.breaths)
+               if i < len(story)]
+    else:                       # sparse
+        strong = [b for b in story
+                  if b.kind in ("revelation", "escalation", "cta")]
+        pool = strong or story[1:]
+        n = min(len(pool), st.rng.choice([3, 4, 5]))
+        pts = [(b.start, min(b.duration, 18.0))
+               for b in st.rng.sample(pool, n)] if pool else []
+
+    # Ямы ближе четырёх секунд друг к другу сливаются в одну долгую — это
+    # уже не приём, а просто тихая музыка. Схлопываем.
+    pts.sort()
+    merged = []
+    for t0, d in pts:
+        if merged and t0 - merged[-1][0] < 4.0:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], t0 + d - merged[-1][0]))
+        else:
+            merged.append((t0, d))
+    return merged
 
 
 def ensure_overlays(st):
@@ -1079,13 +1352,10 @@ def main(job_path):
     # а с заглушенным stderr — вообще никак.
     check_luts(st)
     log("стиль:", json.dumps(st.summary(), ensure_ascii=False))
-    # Карточка стиля кладётся рядом с роликом: из неё channel.py потом
-    # запишет ролик в журнал. Записывается ПОСЛЕ выкладки отдельной командой,
-    # а не здесь: пересобранный десять раз ролик не должен десять раз
-    # выталкивать из списка недавних настоящие.
-    (out / "style.json").write_text(
-        json.dumps(st.summary(), ensure_ascii=False, indent=1),
-        encoding="utf-8")
+    d = st.divergence
+    log(f"  разведение: {d.get('note')}"
+        + (f", отличий от прошлого {len(d['differs_from_prev'])}"
+           if d.get("differs_from_prev") else ""))
 
     marks = json.loads((assets / "marks.json").read_text())
     total = json.loads((assets / "state.json").read_text())["total_audio"]
@@ -1113,6 +1383,53 @@ def main(job_path):
         [{k: str(v) for k, v in s.items() if k != 'framing'} for s in shots],
         indent=1, ensure_ascii=False))
 
+    # ── ПРОВЕРКА ПЛАНА ───────────────────────────────────────────────
+    # По факту, на разложенном плане, а не по намерению генератора. Между
+    # намерением и результатом стоит материал: когда стока мало, план
+    # схлопывается в череду фотографий с одинаковым наездом независимо от
+    # того, какой богатый вектор стиля ему достался.
+    log("── проверка плана на признаки шаблона")
+    findings = rails.audit(shots, st.vector, getattr(st, "beats", None))
+    metrics = rails.metrics(shots)
+    hard = rails.report(findings, log)
+    log(f"  разброс длительностей {metrics['cv_duration']}, "
+        f"скоростей {metrics['speed_stdev']}, "
+        f"переходов {metrics['distinct_transitions']}, "
+        f"движений {metrics['distinct_moves']}")
+    if hard:
+        log("  ! есть замечания уровня «стоп» — ролик соберётся, но "
+            "выкладывать его в таком виде не стоит")
+
+    # ── ПЛАШКИ ───────────────────────────────────────────────────────
+    # Собственная графика конвейера: единственный элемент кадра, которого
+    # нет ни в одном исходном материале.
+    moments = textcard.moments(getattr(st, "beats", []), marks, st.vector,
+                               st.rng)
+    if moments:
+        log(f"── плашки: {len(moments)} шт., стиль {st.text_style}")
+        for m in moments:
+            log(f"  {m['t']/60:5.1f} мин  {m['text']}")
+    elif st.text_style != "none":
+        log("── плашки: чисел в развязках не нашлось, ролик без них")
+
+    # Карточка стиля кладётся рядом с роликом: из неё channel.py потом
+    # запишет ролик в журнал. Пишется ЗДЕСЬ, а не до плана: в неё входят
+    # вектор стиля (по нему следующий ролик будет разводиться), метрики
+    # готового плана и список показанного материала. Всё это известно
+    # только после раскладки.
+    #
+    # В журнал карточка попадает ПОСЛЕ выкладки отдельной командой, а не
+    # отсюда: пересобранный десять раз ролик не должен десять раз
+    # выталкивать из списка недавних настоящие.
+    card = st.summary()
+    card["style_vector"] = {k: (list(v) if isinstance(v, tuple) else v)
+                            for k, v in st.vector.items()}
+    card["plan_metrics"] = metrics
+    card["assets_used"] = getattr(st, "assets_used", {})
+    card["beats"] = [b.summary() for b in getattr(st, "beats", [])]
+    (out / "style.json").write_text(
+        json.dumps(card, ensure_ascii=False, indent=1), encoding="utf-8")
+
     log("── рендер кадров")
     with ThreadPoolExecutor(max_workers=cores()) as ex:
         files = list(ex.map(render_one,
@@ -1127,7 +1444,7 @@ def main(job_path):
         group = shots[gi:gi + SEG_SIZE]
         seg = tmp / f"seg_{gi//SEG_SIZE:03d}.mp4"
         if not seg.exists():
-            join(group, seg, st, sparks, first=(gi == 0))
+            join(group, seg, st, sparks, first=(gi == 0), moments=moments)
         segs.append(seg)
         log(f"  группа {gi//SEG_SIZE + 1}/{math.ceil(len(shots)/SEG_SIZE)}")
 
@@ -1149,8 +1466,13 @@ def main(job_path):
     else:
         log(f"  ! подложки нет ({bed}) — собираю только с голосом")
         bed = None
+    ducks = duck_points(st, getattr(st, "beats", []), getattr(st, "pacing", None))
+    if ducks and bed:
+        log(f"  подложка уходит в {len(ducks)} местах "
+            f"({st.duck_style}, глубина {st.duck_depth})")
     render.build_audio(assets / "voice_full.m4a", bed, mixed, total,
-                       bed_gain_db=job.get("bed_gain_db", -26.0))
+                       bed_gain_db=job.get("bed_gain_db", -26.0),
+                       duck_points=ducks, duck_depth=st.duck_depth)
 
     log("── финал")
     final = out / "final.mp4"
@@ -1171,6 +1493,25 @@ def main(job_path):
     if size_gb > 1.9:
         log(f"  ! {size_gb:.2f} ГБ при лимите GitHub Releases в 2 ГБ — "
             f'подними crf в style_override (сейчас {st.crf})')
+
+    # ── МОНТАЖНЫЙ ЛИСТ ───────────────────────────────────────────────
+    # Строится из того же плана, что ушёл в рендер, поэтому разойтись с
+    # роликом не может технически. Стоит ноль: все решения уже приняты, тут
+    # они только записываются.
+    log("── монтажный лист")
+    paths = edl.export_all(
+        out, shots=shots, beats=getattr(st, "beats", []),
+        style_card=card, vector=st.vector, metrics=metrics,
+        findings=findings, divergence=st.divergence,
+        text_moments=moments,
+        pacing_report=getattr(st, "pacing", None).report()
+        if getattr(st, "pacing", None) else [],
+        pacing_decisions=getattr(st, "pacing", None).decisions
+        if getattr(st, "pacing", None) else {},
+        fps=render.FPS, title=(job.get("youtube") or {}).get("title", job["id"]))
+    for name, p in paths.items():
+        log(f"  {name}: {p}")
+
     log("готово:", final)
 
 
