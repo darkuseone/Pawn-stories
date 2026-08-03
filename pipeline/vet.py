@@ -227,6 +227,15 @@ laboratory imagery), or if it is a chart, a plain book cover with no imagery, \
 a screenshot, a watermark or logo card, or an architectural survey photo of \
 a building exterior.
 
+REJECT ALSO any frame with a website address, domain name, or URL visible \
+anywhere in it — a browser window, a computer or phone screen showing a web \
+page or app, an on-screen ".com"/".org" text, a title or credit card naming \
+a website (this includes digitisation and archive-source credit cards that \
+some old public-domain footage carries at its start or end, even when the \
+rest of the clip is genuinely period material). A single frame like this \
+breaks the documentary illusion for the whole video, so reject the frame \
+even if the surrounding footage in the same clip is otherwise usable.
+
 REJECT ALSO any contemporary hobby, craft, or DIY workshop scene that is not \
 about restoring or examining an antique — for example: someone sanding, \
 carving, painting or assembling a modern item such as a skateboard, \
