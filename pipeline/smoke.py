@@ -57,7 +57,34 @@ def main(job_path):
     n_ch = len(job.get("youtube", {}).get("chapters", []))
     if n_ch != len(job["script_blocks"]):
         raise SystemExit(f"глав {n_ch}, блоков {len(job['script_blocks'])}")
+    if n_ch < 3:
+        raise SystemExit(f"глав {n_ch} — YouTube показывает их от трёх")
     print(f"   {n_ch} глав, начала уникальны")
+
+    # ТИПЫ СПИСОЧНЫХ ПОЛЕЙ. Спецификации пишутся в чате, и строка вместо
+    # списка глазами не видна: в файле лежит "тег один, тег два" и выглядит
+    # совершенно нормально. Дальше join разбирает её ПОСИМВОЛЬНО.
+    # На ff-ep05 это дало 341 «тег» по одной букве и падение youtube.py на
+    # лимите тегов — на самом последнем шаге, уже после полного монтажа.
+    print("── типы полей")
+    for path, val in (("youtube.tags", job.get("youtube", {}).get("tags")),
+                      ("youtube.hashtags", job.get("youtube", {}).get("hashtags")),
+                      ("youtube.chapters", job.get("youtube", {}).get("chapters")),
+                      ("script_blocks", job.get("script_blocks")),
+                      ("image_prompts", job.get("image_prompts")),
+                      ("footage_queries", job.get("footage_queries")),
+                      ("archive_queries", job.get("archive_queries"))):
+        if val is not None and not isinstance(val, list):
+            raise SystemExit(
+                f"{path} записано как {type(val).__name__}, а должно быть "
+                f"списком. Строка здесь разберётся по буквам, а не по "
+                f"запятым: \"{path.split('.')[-1]}\": [...]")
+    tags = ", ".join(youtube.as_list(job.get("youtube", {}).get("tags"), "tags"))
+    if len(tags) > youtube.TAGS_LIMIT:
+        raise SystemExit(f"теги занимают {len(tags)} символов при лимите "
+                         f"{youtube.TAGS_LIMIT} — youtube.py упадёт на них "
+                         f"ПОСЛЕ всего рендера")
+    print(f"   списки на месте, теги {len(tags)}/{youtube.TAGS_LIMIT} символов")
 
     print("── план кадров")
     marks = json.loads((work / "marks.json").read_text())
