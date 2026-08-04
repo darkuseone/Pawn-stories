@@ -1422,6 +1422,171 @@ def check_keys():
             "короткий идентификатор голоса из Voice Library, а не ключ.")
 
 
+# ─────────────────── УРОЖАЙНОСТЬ И ДОЗАКАЧКА ───────────────────
+
+def manifest_of(work: Path, folder: str):
+    p = work / folder / "_manifest.json"
+    if not p.exists():
+        return []
+    try:
+        return json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return []
+
+
+def _file_number(path_str: str):
+    """clip_007_pexels.mp4 -> 7. Номер — то, чем оперирует отбраковка."""
+    try:
+        return int(Path(path_str).name.split("_")[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def yield_report(work: Path, folder: str, kind: str, log=log):
+    """
+    Сколько КАЖДЫЙ запрос скачал и сколько из этого выжило после отбраковки.
+
+    Раньше в логе была строка «по источникам: pixabay 12, pexels 0» — по ней
+    видно мёртвый ИСТОЧНИК, но не видно мёртвый ЗАПРОС. А чинить надо
+    именно запрос: на первом прогоне pawn-01 «candle lamp light on aged
+    wood» принёс бананы, петуха и статую Свободы — всё честно скачалось,
+    всё честно отбраковалось, и в логе это выглядело как общая убыль.
+
+    Возвращает {запрос: (скачано, выжило)}. Запрос с нулём выживших — тот
+    самый, который надо переписать, и теперь его видно поимённо.
+    """
+    man = manifest_of(work, folder)
+    if not man:
+        return {}
+    rejected = set(vet.rejected_from(work).get(kind, []))
+    stat = {}
+    for item in man:
+        q = item.get("q")
+        if not q:
+            continue
+        got, alive = stat.get(q, (0, 0))
+        n = _file_number(item.get("file", ""))
+        stat[q] = (got + 1, alive + (0 if n in rejected else 1))
+
+    dead = [q for q, (g, a) in stat.items() if a == 0]
+    log(f"  урожайность запросов ({folder}):")
+    for q, (g, a) in sorted(stat.items(), key=lambda x: x[1][1]):
+        mark = "  ← ПУСТО" if a == 0 else ""
+        log(f"    {a:>2}/{g:<3} «{q}»{mark}")
+    if dead:
+        n = len(dead)
+        word = ("запрос не дал" if n % 10 == 1 and n % 100 != 11
+                else "запроса не дали" if n % 10 in (2, 3, 4)
+                and n % 100 not in (12, 13, 14) else "запросов не дали")
+        log(f"  ! {n} {word} НИ ОДНОГО годного файла — "
+            f"их надо переписать, а не добирать: " +
+            ", ".join(f"«{q}»" for q in dead[:4]) +
+            (" …" if n > 4 else ""))
+    return stat
+
+
+# Как расширяется мёртвый запрос. Ровно две операции, и обе безопасные:
+# укоротить до главных слов (стоки ищут по ИЛИ, длинная фраза только шире
+# размывает выдачу) и снять уточнения фактуры, оставив предмет.
+#
+# Синонимов и переводов здесь НЕТ намеренно. Подстановка синонимов ведёт
+# запрос в сторону от темы — а именно уход от темы и есть причина, по
+# которой запрос уже отбраковался. Лучше меньше материала, чем материал
+# не про то: второе стоит человеку отсмотра, первое — одной строки в логе.
+def expand_query(q: str):
+    """Варианты одного запроса, от самого близкого к исходному."""
+    out, seen = [], {q.lower()}
+    for keep in (3, 2):
+        v = short_query(q, keep)
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            out.append(v)
+    return out
+
+
+def top_up_footage(job, work: Path, need_clips: int, log=log):
+    """
+    Дозакачка футажа, когда годного меньше, чем просит план.
+
+    Зачем автоматически. rails.py умеет сказать «155 кадров подряд без
+    единой вставки видео», но говорит это ПОСЛЕ раскладки, и дальше цикл
+    такой: человек видит предупреждение, руками правит запросы, гоняет
+    stage: material заново. При этом сама нехватка известна здесь и сейчас —
+    сразу после отбраковки, до того как что-либо разложено.
+
+    Слайдшоу — это не спорное стилевое решение, которое нельзя чинить
+    автоматически (принцип rails.py), а нехватка сырья. Разница
+    принципиальная: правка под метрику меняла бы РЕШЕНИЕ монтажёра, а здесь
+    доливается МАТЕРИАЛ, и все решения остаются за редакторским слоем.
+
+    Денег не стоит: те же открытые источники, что и в обычном сборе.
+    """
+    man = manifest_of(work, "footage")
+    rejected = set(vet.rejected_from(work).get("clip", []))
+    alive = sum(1 for m in man
+                if _file_number(m.get("file", "")) not in rejected)
+    if alive >= need_clips:
+        log(f"  футажа хватает: годных {alive} при нужных {need_clips}")
+        return 0
+
+    stat = {}
+    for m in man:
+        q = m.get("q")
+        if not q:
+            continue
+        n = _file_number(m.get("file", ""))
+        g, a = stat.get(q, (0, 0))
+        stat[q] = (g + 1, a + (0 if n in rejected else 1))
+
+    # Расширяем ТОЛЬКО те запросы, что уже что-то дали: у них тема ловится,
+    # просто выдача узкая. Запрос с нулём годного расширять бессмысленно —
+    # он не про то, и короткая его версия будет не про то же самое.
+    live_q = [q for q, (g, a) in stat.items() if a > 0] or \
+             list(job.get("footage_queries", []))
+    extra = []
+    for q in live_q:
+        extra += expand_query(q)
+    # порядок сохраняем, дубли убираем
+    seen, queries = set(), []
+    for q in extra:
+        if q.lower() not in seen:
+            seen.add(q.lower())
+            queries.append(q)
+    if not queries:
+        log(f"  ! футажа не хватает ({alive} из {need_clips}), но расширять "
+            f"нечего: ни один запрос не дал годного материала")
+        return 0
+
+    log(f"  ! годного футажа {alive}, плану нужно {need_clips} — "
+        f"дозакачка по {len(queries)} расширенным запросам")
+    vids = sources_from(job, "video_sources", VIDEO_SOURCES)
+    before = len(man)
+    gather(queries, 3, vids, work / "footage", "clip",
+           budget=int(job.get("top_up_budget", 240)))
+    added = len(manifest_of(work, "footage")) - before
+    log(f"  дозакачано {added} клипов — их ещё предстоит отбраковать")
+    return added
+
+
+def clips_needed(job, total_seconds: float) -> int:
+    """
+    Сколько РАЗНЫХ клипов просит план, чтобы не выйти слайдшоу.
+
+    Считается тем же способом, что и в build.plan_shots: доля стока от
+    экранного времени, делённая на среднюю длину кадра, и всё это делится
+    на потолок повторов одного файла (build.MAX_REUSE = 3). Точность здесь
+    не нужна: это порог «доливать или нет», а не план.
+    """
+    base = float((job.get("style_override") or {}).get(
+        "base_duration_range", [4.2, 5.6])[0]) or 4.8
+    share = float((job.get("style_override") or {}).get("generated_share", 0.30))
+    shots = max(8, int(total_seconds / base))
+    # сток закрывает примерно половину «реальной» части, вторая половина —
+    # архивные фото; ровно так же делит их MaterialMix на монтаже
+    clip_shots = shots * (1 - share) * 0.5
+    return max(4, int(clip_shots / 3))
+
+
 # ────────────────────────── ГЛАВНОЕ ──────────────────────────
 
 def fetch_material(job, work: Path):
@@ -1710,12 +1875,36 @@ def main(job_path, stage="all"):
     if stage == "vet":
         log("── отбраковка материала роботом (без скачивания)")
         vet.vet_all(job, work, use_vision=job.get("vet_vision", True))
+        log("── что дал каждый запрос")
+        yield_report(work, "footage", "clip")
+        yield_report(work, "archive", "arch")
         return
 
     if stage == "material":
         fetch_material(job, work)
         log("── отбраковка материала роботом")
         vet.vet_all(job, work, use_vision=job.get("vet_vision", True))
+        log("── что дал каждый запрос")
+        yield_report(work, "footage", "clip")
+        yield_report(work, "archive", "arch")
+
+        # ДОЗАКАЧКА ПО ФАКТУ НЕХВАТКИ. Здесь известно и сколько годного
+        # осталось, и сколько просит план — а значит, чинить нехватку надо
+        # здесь, а не отправлять человека на второй круг stage: material
+        # по предупреждению из rails.py.
+        st = work / "state.json"
+        if st.exists():
+            total = json.loads(st.read_text()).get("total_audio", 0)
+            if total:
+                need = clips_needed(job, total)
+                if top_up_footage(job, work, need):
+                    log("── отбраковка дозакачанного")
+                    vet.vet_all(job, work,
+                                use_vision=job.get("vet_vision", True))
+                    yield_report(work, "footage", "clip")
+        else:
+            log("  (длина ролика ещё не известна — дозакачка по факту "
+                "нехватки будет на полном прогоне)")
         log("── материал добран, озвучка и картинки не тронуты")
         return
 
@@ -1788,6 +1977,21 @@ def main(job_path, stage="all"):
 
     log("── отбраковка материала роботом")
     vet.vet_all(job, work, use_vision=job.get("vet_vision", True))
+
+    log("── что дал каждый запрос")
+    yield_report(work, "footage", "clip")
+    yield_report(work, "archive", "arch")
+
+    # ДОЗАКАЧКА ФУТАЖА ПО ФАКТУ НЕХВАТКИ — до добора генерацией, а не после.
+    # Порядок важен: fill_gaps закрывает дырку РИСОВАННЫМИ кадрами, и если
+    # пустить его первым, он честно закроет нехватку стока генерацией, доля
+    # реального материала просядет, а настоящий футаж, который лежал в
+    # двух запросах от нас, так и не будет скачан.
+    need = clips_needed(job, total)
+    if top_up_footage(job, work, need):
+        log("── отбраковка дозакачанного")
+        vet.vet_all(job, work, use_vision=job.get("vet_vision", True))
+        yield_report(work, "footage", "clip")
 
     log("── добор генерацией того, чего не хватило")
     fill_gaps(job, work, total, model, key)
