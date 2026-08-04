@@ -44,7 +44,11 @@ LOG = ROOT / "channel" / "log.json"
 # Сколько последних роликов учитывать по каждой оси. Больше — разнообразнее,
 # но и пул быстрее кончается: цветокоров всего пять, при глубине 5 выбирать
 # станет не из чего и защита выключится сама.
-DEPTH = {"lut": 3, "opening": 2, "main_transition": 2, "sparks": 2}
+# Подложка: глубина 2. Больше нельзя — подложек всего пять, при глубине 4-5
+# выбирать станет не из чего и защита выключится сама (ровно то же
+# соображение, что и по цветокорам выше).
+DEPTH = {"lut": 3, "opening": 2, "main_transition": 2, "sparks": 2,
+         "music": 2}
 
 # Насколько темы должны различаться. 0.34 значит: если треть значимых слов
 # совпала, это уже та же тема. Подобрано на глаз и намеренно строго —
@@ -169,6 +173,7 @@ def entry_from(job, style_card: dict, test=False):
         "title": y.get("title", ""),
         "lut": style_card.get("lut"),
         "archive_lut": style_card.get("archive_lut"),
+        "music": style_card.get("music"),
         "opening": style_card.get("opening"),
         "main_transition": style_card.get("main_transition"),
         "sparks": style_card.get("sparks"),

@@ -279,14 +279,16 @@ MAGNIFIC_STOCK_DAILY_CAP = 15           # сток Magnific: видео+фото
 # прогоном, поле легко переопределяется job["magnific_image_models"].
 MAGNIFIC_IMAGE_MODELS = ["flux2pro", "nano-banana2", "seedream5pro"]
 
-# НЕПОДТВЕРЖДЕНО ЕЩЁ СИЛЬНЕЕ: документация вообще не даёт путей для видео
-# (только имена провайдеров — Kling, MiniMax Hailuo, WAN, Seedance и
-# другие). Путь /v1/ai/<engine> — это перенос схемы Mystic по аналогии,
-# а не факт из документации. Смотри предупреждение в
+# Kling и MiniMax Hailuo УБРАНЫ по решению канала — не использовать, хотя
+# подписка их и даёт. Остались Seedance и WAN.
+#
+# НЕПОДТВЕРЖДЕНО ЕЩЁ СИЛЬНЕЕ, чем модели картинок: документация вообще не
+# даёт путей для видео (только имена провайдеров в таблице каталога).
+# Путь /v1/ai/<engine> — это перенос схемы Mystic по аналогии, а не факт
+# из документации. Смотри предупреждение в
 # fill_missing_footage_via_magnific — эта часть не должна уйти в платный
 # прогон непроверенной.
-MAGNIFIC_VIDEO_MODELS = ["minimax-hailuo-2.3", "seedance-1.5pro",
-                         "kling-2.5", "wan-2.2"]
+MAGNIFIC_VIDEO_MODELS = ["seedance-1.5pro", "wan-2.2"]
 
 
 def _magnific_headers(key):

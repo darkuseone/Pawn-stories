@@ -33,7 +33,6 @@
     "similarity_boost": 0.75,
     "style": 0.14
   },
-  "music": "assets/music/bed.mp3",
   "bed_gain_db": -27.0,
   "_цветокор": "Не oak_brass и не long_footage — их занял pawn-01, channel.py это проверяет. Здесь ламповый свет: самый вечерний из тёплой семьи, под истории про чердаки и лавки после закрытия.",
   "lut": "lamp_glow",

@@ -35,6 +35,7 @@ style.py — движок антишаблонности.
 """
 
 import random
+from pathlib import Path
 
 from editorial import variation, memory
 
@@ -53,6 +54,26 @@ LUTS = ["warm_amber", "oak_brass", "lamp_glow", "dust_gold", "copper_dusk"]
 # не оттенком (он тоже тёплый), а плотностью: насыщенность ниже, контраст
 # выше, картинка читается как отпечаток, а не как кадр.
 ARCHIVE_LUTS = ["archive_sepia", "archive_silver", "archive_paper"]
+
+# Папка с подложками. Пул НЕ ЗАШИТ СПИСКОМ, а читается с диска: подложки
+# добавляются и заменяются без правки кода, и список из пяти имён в
+# константе устарел бы на первом же новом файле.
+MUSIC_DIR = Path(__file__).parent.parent / "assets" / "music"
+
+
+def music_pool():
+    """
+    Все подложки канала, по алфавиту. Пустой список — это штатно: подложки
+    может не быть вовсе, тогда ролик собирается с одним голосом.
+
+    Сортировка обязательна. glob отдаёт файлы в порядке файловой системы,
+    он различается между машиной разработчика и раннером GitHub — и жребий,
+    считающийся от индекса в этом списке, перестал бы быть воспроизводимым:
+    один и тот же id давал бы разную музыку в разных местах.
+    """
+    if not MUSIC_DIR.exists():
+        return []
+    return sorted(p.name for p in MUSIC_DIR.glob("*.mp3"))
 
 # Движения камеры. w0/w1 — ширина виртуального холста в начале и конце
 # (растёт = наезд, падает = отъезд). x/y — положение окна кадра 0..1.
@@ -230,7 +251,7 @@ class StyleEngine:
 
     def __init__(self, video_id: str, recent_luts=None, recent_openings=None,
                  recent_transitions=None, recent_sparks=None,
-                 diverge=True, log=print):
+                 recent_music=None, diverge=True, log=print):
         """
         recent_* — что использовалось в последних роликах канала. Списки
         приходят из channel.py и работают как жёсткий запрет: без них
@@ -242,6 +263,19 @@ class StyleEngine:
         """
         self.video_id = video_id
         self.log = log
+
+        # ПОДЛОЖКА. Отдельный генератор, а не общий self.rng ниже, и это не
+        # придирка к чистоте: жребий в движке идёт одной лентой, и лишний
+        # вызов r.choice() в середине сдвигает ВСЕ последующие — цветокор,
+        # переход, открытие, движения. Добавь музыку в общую ленту, и все
+        # уже собранные ролики при пересборке получат другой стиль, а
+        # воспроизводимость по id (ради которой seed и заведён) сломается
+        # молча. Своя лента с другим смещением не задевает ничего.
+        recent_music = list(recent_music or [])[-2:]
+        pool = music_pool()
+        picked = [m for m in pool if m not in recent_music] or pool
+        self.music = (random.Random(seed_from(video_id) + 101).choice(picked)
+                      if picked else None)
 
         # ── ВЕКТОР СТИЛЯ ──────────────────────────────────────────────
         # Бросается целиком и разводится с историей канала: минимум четыре
@@ -516,6 +550,7 @@ class StyleEngine:
             "video_id": self.video_id,
             "lut": self.lut,
             "archive_lut": self.archive_lut,
+            "music": self.music,
             "generated_share": self.generated_share,
             "grain": self.grain,
             "vignette": self.vignette,

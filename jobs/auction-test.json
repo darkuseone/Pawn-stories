@@ -7,7 +7,6 @@
   "voice_settings": { "stability": 0.42, "similarity_boost": 0.8 },
 
   "_музыка": "Подложки в репозитории пока нет — делается отдельно. Пока файла нет, ролик собирается с одним голосом и пишет об этом в лог.",
-  "music": "assets/music/bed.mp3",
   "bed_gain_db": -26.0,
 
   "_цветокор": "Тёплая семья канала. Готовые: warm_amber, oak_brass, lamp_glow, dust_gold, copper_dusk. Архивные: archive_sepia, archive_silver, archive_paper.",

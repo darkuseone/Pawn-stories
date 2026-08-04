@@ -43,9 +43,11 @@ from editorial import rails, textcard, edl
 ROOT = Path(__file__).parent.parent
 LUTS = ROOT / "assets" / "luts"
 OVERLAYS = ROOT / "assets" / "overlays"
-# Подложка по умолчанию. Своя для ролика задаётся полем music в
-# спецификации — у каждого канала она обычно разная.
-MUSIC = ROOT / "assets" / "music" / "bed.mp3"
+# Папка подложек. Конкретный файл выбирает движок стиля (style.music_pool)
+# и разводит с последними роликами — как цветокор и переход. Поле music в
+# спецификации остаётся жёстким переопределением на случай, когда ролику
+# нужна именно эта дорожка.
+MUSIC_DIR = ROOT / "assets" / "music"
 
 SEG_SIZE = 12          # кадров в одной группе склейки
 
@@ -1358,7 +1360,8 @@ def main(job_path):
         recent_luts=job.get("recent_luts") or av["lut"],
         recent_openings=job.get("recent_openings") or av["opening"],
         recent_transitions=av["main_transition"],
-        recent_sparks=av["sparks"])
+        recent_sparks=av["sparks"],
+        recent_music=av["music"])
     # Цветокор можно задать и на верхнем уровне спецификации, и внутри
     # style_override. Раньше верхний уровень читался только для archive_lut,
     # а lut рядом с ним молча игнорировался — и ролик, в спецификации
@@ -1478,18 +1481,41 @@ def main(job_path):
 
     log("── звук")
     mixed = tmp / "audio.m4a"
-    bed = Path(job["music"]) if job.get("music") else MUSIC
-    if not bed.is_absolute():
+    # Порядок: поле music в спецификации -> выбор движка стиля -> ничего.
+    if job.get("music"):
+        bed = Path(job["music"])
+        chosen_by = "спецификация"
+    elif getattr(st, "music", None):
+        bed = MUSIC_DIR / st.music
+        chosen_by = "жребий, разведён с последними роликами"
+    else:
+        bed = None
+        chosen_by = None
+    if bed is not None and not bed.is_absolute():
         bed = ROOT / bed
     # Подложки может не быть: она делается отдельно и появляется в репозитории
     # позже кода. Раньше это роняло всю сборку на последнем шаге — после
     # сорока минут рендера, из-за отсутствующего mp3. Теперь ролик собирается
     # с одним голосом, а в лог уходит внятное предупреждение.
-    if bed.exists():
-        log(f"  подложка: {bed.name}")
-    else:
-        log(f"  ! подложки нет ({bed}) — собираю только с голосом")
-        bed = None
+    #
+    # Отдельно про ПРОПАВШИЙ ФАЙЛ ИЗ СПЕЦИФИКАЦИИ: подложки канала переименовали
+    # (bed.mp3 -> bed1..bed5), и старые спецификации указывают на файл, которого
+    # больше нет. Молча собрать такой ролик без музыки — худший исход: заметно
+    # это только на готовом файле. Поэтому если файл ЗАДАН ЯВНО и не найден,
+    # берём жребий движка и говорим об этом громко.
+    if bed is not None and not bed.exists():
+        fallback = MUSIC_DIR / st.music if getattr(st, "music", None) else None
+        if chosen_by == "спецификация" and fallback and fallback.exists():
+            log(f"  ! подложки {bed.name} нет (её переименовали?) — "
+                f"беру {fallback.name} жребием")
+            bed, chosen_by = fallback, "жребий вместо пропавшего файла"
+        else:
+            log(f"  ! подложки нет ({bed}) — собираю только с голосом")
+            bed = None
+    if bed is not None:
+        log(f"  подложка: {bed.name} ({chosen_by})")
+    elif not style_mod.music_pool():
+        log("  ! подложек нет в assets/music — собираю только с голосом")
     ducks = duck_points(st, getattr(st, "beats", []), getattr(st, "pacing", None))
     if ducks and bed:
         log(f"  подложка уходит в {len(ducks)} местах "
