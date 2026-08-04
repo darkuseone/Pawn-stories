@@ -63,8 +63,9 @@ jobs:
           ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
           PEXELS_API_KEY:     ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY:    ${{ secrets.PIXABAY_API_KEY }}
+          MAGNIFIC_API_KEY:   ${{ secrets.MAGNIFIC_API_KEY }}
           # Только факт наличия, не значения: Variables в логах НЕ маскируются.
-          SAME_NAMES_IN_VARS: ${{ vars.XAI_API_KEY != '' || vars.ELEVENLABS_API_KEY != '' || vars.PEXELS_API_KEY != '' || vars.PIXABAY_API_KEY != '' }}
+          SAME_NAMES_IN_VARS: ${{ vars.XAI_API_KEY != '' || vars.ELEVENLABS_API_KEY != '' || vars.PEXELS_API_KEY != '' || vars.PIXABAY_API_KEY != '' || vars.MAGNIFIC_API_KEY != '' }}
         run: |
           # На material и render генерация и озвучка не запускаются, их ключи
           # там не нужны — иначе бесплатный добор падал бы из-за xAI.
@@ -73,17 +74,26 @@ jobs:
           # Congress, archive.org). Без Pexels и Pixabay не будет только
           # стокового видео — этап соберёт архивные фото и листы отбора,
           # а не упадёт. Проверка, которая роняет работающий прогон, хуже
-          # отсутствующей.
+          # отсутствующей. MAGNIFIC_API_KEY нигде не в need: без него
+          # генерация картинок целиком уходит на xAI, а сток-заплатка и
+          # видео-вставки просто не добираются — штатный режим.
           case "${{ steps.pick.outputs.stage }}" in
-            material) need="" ; want="PEXELS_API_KEY PIXABAY_API_KEY" ;;
+            material) need="" ; want="PEXELS_API_KEY PIXABAY_API_KEY MAGNIFIC_API_KEY" ;;
             vet)      need="" ; want="XAI_API_KEY" ;;
             render)   need="" ; want="" ;;
-            *)        need="XAI_API_KEY ELEVENLABS_API_KEY PEXELS_API_KEY PIXABAY_API_KEY" ; want="ELEVENLABS_VOICE_ID" ;;
+            *)        need="XAI_API_KEY ELEVENLABS_API_KEY PEXELS_API_KEY PIXABAY_API_KEY" ; want="ELEVENLABS_VOICE_ID MAGNIFIC_API_KEY" ;;
           esac
           for k in $want; do
             eval "v=\$$k"
             if [ -z "$v" ]; then
-              echo "нет:   $k — будет взято поле voice_id из спецификации ролика"
+              case "$k" in
+                ELEVENLABS_VOICE_ID)
+                  echo "нет:   $k — будет взято поле voice_id из спецификации ролика" ;;
+                MAGNIFIC_API_KEY)
+                  echo "нет:   $k — генерация картинок целиком уйдёт на xAI, футаж и графика через magnific не добираются" ;;
+                *)
+                  echo "нет:   $k — необязателен, продолжаю без него" ;;
+              esac
             else
               echo "есть:  $k"
             fi
@@ -126,10 +136,13 @@ jobs:
       - name: Этап 0 — добор материала и листы отбора
         if: steps.pick.outputs.stage == 'material'
         env:
-          PEXELS_API_KEY:  ${{ secrets.PEXELS_API_KEY }}
-          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          PEXELS_API_KEY:   ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY:  ${{ secrets.PIXABAY_API_KEY }}
           # Отбраковка на этом этапе тоже смотрит зрением, ключ ей нужен.
-          XAI_API_KEY:     ${{ secrets.XAI_API_KEY }}
+          XAI_API_KEY:      ${{ secrets.XAI_API_KEY }}
+          # Нужен только если в спецификации есть graphic_queries и по ним
+          # не нашлось обычными архивами — иначе просто не используется.
+          MAGNIFIC_API_KEY: ${{ secrets.MAGNIFIC_API_KEY }}
         run: |
           set -e
           python pipeline/assets.py jobs/${{ steps.pick.outputs.job }}.json material
@@ -180,6 +193,8 @@ jobs:
           ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
           PEXELS_API_KEY:     ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY:    ${{ secrets.PIXABAY_API_KEY }}
+          # Необязателен: без него 70/30 не делится, всё уходит на xAI.
+          MAGNIFIC_API_KEY:   ${{ secrets.MAGNIFIC_API_KEY }}
         run: python pipeline/assets.py jobs/${{ steps.pick.outputs.job }}.json
 
       # Только если что-то качали. На чистом перерендере папка не менялась.

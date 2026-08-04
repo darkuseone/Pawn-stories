@@ -92,7 +92,8 @@ def main(job_path):
     av = channel.avoid()
     st = style_mod.StyleEngine(
         job["id"], recent_luts=av["lut"], recent_openings=av["opening"],
-        recent_transitions=av["main_transition"], recent_sparks=av["sparks"])
+        recent_transitions=av["main_transition"], recent_sparks=av["sparks"],
+        recent_music=av["music"])
     for k in ("lut", "archive_lut"):
         if job.get(k):
             setattr(st, k, job[k])

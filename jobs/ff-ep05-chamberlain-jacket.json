@@ -18,7 +18,6 @@
   "similarity": 0.72,
   "style": 0.2
  },
- "music": "assets/music/bed.mp3",
  "bed_gain_db": -27.0,
  "batch": true,
  "material_overshoot": 1.4,
