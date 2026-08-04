@@ -242,7 +242,15 @@ def _duration(p: Path):
 # ────────────────────────── ИЗОБРАЖЕНИЯ ──────────────────────────
 
 XAI = "https://api.x.ai/v1"
-MAGNIFIC_API = "https://api.magnificapi.com/v1"
+
+# ПОДТВЕРЖДЕНО ДОКУМЕНТАЦИЕЙ (docs.magnific.com): базовый URL, заголовок
+# авторизации и асинхронная модель — POST отдаёт task_id и status
+# IN_PROGRESS, готовый результат забирается GET на тот же путь + /{task_id}.
+# webhook_url в запросе не используется: ролик собирается одноразовым
+# скриптом в GitHub Actions, у которого нет публичного адреса принять
+# обратный вызов — см. обсуждение с каналом. Поэтому везде поллинг.
+MAGNIFIC_API = "https://api.magnific.com"
+MAGNIFIC_AUTH_HEADER = "x-magnific-api-key"
 
 # Условия оговорены с каналом, не угаданы. 70% генерации картинок уходит на
 # Magnific (безлимит по подписке), 30% остаётся на xAI — ровно то деление,
@@ -257,9 +265,65 @@ MAGNIFIC_API = "https://api.magnificapi.com/v1"
 MAGNIFIC_IMAGE_SHARE = 0.70
 MAGNIFIC_VIDEO_GEN_SHARE = 0.05
 MAGNIFIC_STOCK_DAILY_CAP = 15           # сток Magnific: видео+фото вместе, в сутки
+
+# НЕПОДТВЕРЖДЕНО. Документация канала называет движки по именам (Mystic —
+# «фирменный» движок с явным путём /v1/ai/mystic; Flux 2 Pro, Seedream
+# 4/4.5, Kling, MiniMax Hailuo, WAN и другие — только в таблице каталога,
+# без путей). Названы каналом («flux2pro», «nano-banana2», «seedream5pro»)
+# в переписке ДО того, как я увидел документацию — «seedream5pro» не
+# совпадает с «Seedream 4.5» из каталога, «nano-banana2» в каталоге не
+# упоминается вовсе. Собраны здесь как значения параметра model у Mystic
+# (тот же контракт, что и его собственный пример с model="realism") — это
+# рабочее предположение, а не факт: сверить фактические имена моделей в
+# Dashboard канала (magnific.com/developers/dashboard) перед первым платным
+# прогоном, поле легко переопределяется job["magnific_image_models"].
 MAGNIFIC_IMAGE_MODELS = ["flux2pro", "nano-banana2", "seedream5pro"]
+
+# НЕПОДТВЕРЖДЕНО ЕЩЁ СИЛЬНЕЕ: документация вообще не даёт путей для видео
+# (только имена провайдеров — Kling, MiniMax Hailuo, WAN, Seedance и
+# другие). Путь /v1/ai/<engine> — это перенос схемы Mystic по аналогии,
+# а не факт из документации. Смотри предупреждение в
+# fill_missing_footage_via_magnific — эта часть не должна уйти в платный
+# прогон непроверенной.
 MAGNIFIC_VIDEO_MODELS = ["minimax-hailuo-2.3", "seedance-1.5pro",
                          "kling-2.5", "wan-2.2"]
+
+
+def _magnific_headers(key):
+    return {MAGNIFIC_AUTH_HEADER: key, "Content-Type": "application/json"}
+
+
+def _magnific_poll(path: str, task_id: str, key, timeout=300):
+    """
+    Поллинг асинхронной задачи Magnific — ПОДТВЕРЖДЕНО документацией
+    (раздел 3): GET на тот же путь + /{task_id}, статусы IN_PROGRESS ->
+    COMPLETED/FAILED, результат в ответе под ключом "data".
+
+    Экспоненциальная задержка 1-2-4-8...с потолком 15 с — так рекомендует
+    сама документация канала, а не выдумано: часть задач Mystic закрывается
+    за секунды, часть (видео) — за минуты, и опрашивать обе на одном
+    фиксированном интервале значит либо долбить API зря на быстрых, либо
+    ждать лишний круг на медленных.
+    """
+    deadline = time.time() + timeout
+    delay = 1.0
+    while time.time() < deadline:
+        r = requests.get(f"{MAGNIFIC_API}{path}/{task_id}", timeout=TIMEOUT,
+                         headers=_magnific_headers(key))
+        if r.status_code != 200:
+            raise RuntimeError(f"magnific: опрос {task_id} — "
+                              f"{r.status_code} {r.text[:200]}")
+        data = r.json().get("data", {})
+        status = data.get("status")
+        if status == "COMPLETED":
+            return data
+        if status == "FAILED":
+            raise RuntimeError(f"magnific: задача {task_id} провалилась — "
+                              f"{json.dumps(data)[:200]}")
+        time.sleep(delay)
+        delay = min(delay * 2, 15.0)
+    raise TimeoutError(f"magnific: задача {task_id} не завершилась за "
+                       f"{timeout} с")
 
 
 def split_indexed(prompts, share):
@@ -309,25 +373,48 @@ def images_sync(indexed_prompts, out: Path, model, key):
         log(f"  картинка {idx} (xai)")
 
 
+def _magnific_generated_url(data: dict):
+    """
+    Достаёт ссылку на файл из завершённой задачи Magnific.
+
+    НЕПОДТВЕРЖДЕНО. Документация показывает только `result["generated"]`
+    в примере (см. section 5 инструкции канала) без разбора структуры —
+    неизвестно, это строка-URL, список строк или список объектов с полем
+    url/image. Разобраны все три формы, чтобы не упасть молча на первом же
+    расхождении, но сверить с реальным ответом всё равно нужно.
+    """
+    gen = data.get("generated")
+    if isinstance(gen, str):
+        return gen
+    if isinstance(gen, list) and gen:
+        first = gen[0]
+        if isinstance(first, str):
+            return first
+        if isinstance(first, dict):
+            return first.get("url") or first.get("image") or first.get("image_url")
+    if isinstance(gen, dict):
+        return gen.get("url") or gen.get("image")
+    return None
+
+
 def images_magnific(indexed_prompts, out: Path, key):
     """
     Основной объём картинок ролика (70% по умолчанию) — здесь, через
     подписку без лимита на генерацию.
 
-    Три модели по кругу (flux2pro, nano-banana2, seedream5pro), а не одна:
-    одна модель на весь объём дала бы ролику ровно тот однородный почерк
-    генерации, от которого и так уводит вектор стиля в variation.py на
-    монтаже — незачем гасить разнообразие здесь, чтобы потом разводить его
-    там.
+    Эндпойнт /v1/ai/mystic и асинхронная пара POST+GET(task_id) —
+    ПОДТВЕРЖДЕНО документацией канала (Mystic — «фирменный движок»,
+    рекомендованный там же). Имена в MAGNIFIC_IMAGE_MODELS для параметра
+    model — НЕТ, см. предупреждение у константы: сверить в Dashboard перед
+    платным прогоном.
 
-    Без пакетного режима: подписка безлимитная, экономить не на чем, а
-    курьерский пакет у xAI существует специально ради вдвое меньшей цены,
-    которая тут не нужна.
+    Три модели по кругу, а не одна: одна модель на весь объём дала бы
+    ролику однородный почерк генерации, от которого и так уводит вектор
+    стиля в variation.py на монтаже.
 
-    ЭНДПОЙНТ ПРЕДПОЛОЖИТЕЛЬНЫЙ. Собран по образцу images_sync (тот же
-    контракт: POST с model/prompt/n, в ответе data[0].url) — сверить путь,
-    имя параметров и формат авторизации с реальной документацией Magnific
-    перед первым платным прогоном.
+    Без webhook_url: ролик собирается одноразовым скриптом в GitHub
+    Actions, отвечать на обратный вызов некому — поэтому поллинг
+    (_magnific_poll), как и советует документация в этом случае.
     """
     out.mkdir(parents=True, exist_ok=True)
     for i, (idx, p) in enumerate(indexed_prompts):
@@ -335,18 +422,26 @@ def images_magnific(indexed_prompts, out: Path, key):
         if dst.exists():
             continue
         model = MAGNIFIC_IMAGE_MODELS[i % len(MAGNIFIC_IMAGE_MODELS)]
-        r = requests.post(f"{MAGNIFIC_API}/images/generations", timeout=180,
-                          headers={"Authorization": f"Bearer {key}",
-                                   "Content-Type": "application/json"},
-                          json={"model": model, "prompt": p, "n": 1})
+        r = requests.post(f"{MAGNIFIC_API}/v1/ai/mystic", timeout=TIMEOUT,
+                          headers=_magnific_headers(key),
+                          json={"prompt": p, "model": model})
         if r.status_code != 200:
-            log(f"  ! magnific картинка {idx} ({model}) не вышла: "
+            log(f"  ! magnific картинка {idx} ({model}) не запустилась: "
                 f"{r.status_code} {r.text[:160]}")
             continue
+        task_id = (r.json().get("data") or {}).get("task_id")
+        if not task_id:
+            log(f"  ! magnific картинка {idx}: в ответе нет task_id")
+            continue
         try:
-            url = r.json()["data"][0]["url"]
-        except (KeyError, IndexError):
-            log(f"  ! magnific картинка {idx}: в ответе нет ссылки")
+            data = _magnific_poll("/v1/ai/mystic", task_id, key)
+        except (RuntimeError, TimeoutError) as e:
+            log(f"  ! magnific картинка {idx} ({model}): {e}")
+            continue
+        url = _magnific_generated_url(data)
+        if not url:
+            log(f"  ! magnific картинка {idx}: в ответе нет ссылки "
+                f"({json.dumps(data)[:160]})")
             continue
         dst.write_bytes(requests.get(url, timeout=120).content)
         log(f"  картинка {idx} (magnific/{model})")
@@ -977,8 +1072,15 @@ def src_magnific(q, n):
     если бы счётчик обнулялся на каждой, суточный лимит стал бы лимитом на
     прогон.
 
-    ЭНДПОЙНТ ПРЕДПОЛОЖИТЕЛЬНЫЙ — сверить путь и форму ответа с реальной
-    документацией Magnific перед первым платным запросом.
+    ЭНДПОЙНТ НЕПОДТВЕРЖДЁН. Документация канала называет только страницу
+    каталога («GET /api-reference/resources») без реального пути вызова —
+    это адрес СТРАНИЦЫ документации (по образцу /api-reference/mystic/
+    post-mystic для Mystic, чей настоящий путь вызова /v1/ai/mystic
+    оказался другим), а не подтверждённый REST-путь. Ниже — рабочее
+    предположение по аналогии с остальным API; сверить перед первым
+    платным запросом. Синхронный (без task_id): раздел 3 документации
+    относит к асинхронным именно AI-генерацию, поиск по стоку — обычная
+    выдача каталога.
     """
     key = (os.environ.get("MAGNIFIC_API_KEY") or "").strip()
     if not key:
@@ -990,8 +1092,8 @@ def src_magnific(q, n):
             f"исчерпана, пропускаю «{q}»")
         return []
     take = min(n, room)
-    r = requests.get(f"{MAGNIFIC_API}/stock/search", timeout=TIMEOUT,
-                     headers={"Authorization": f"Bearer {key}"},
+    r = requests.get(f"{MAGNIFIC_API}/v1/resources", timeout=TIMEOUT,
+                     headers=_magnific_headers(key),
                      params={"query": q, "type": "vector,illustration,graphic",
                              "per_page": take})
     if not ok(r, "magnific", q):
@@ -1280,13 +1382,31 @@ def check_keys():
           None, {"key": pix, "q": "test", "per_page": 3})
 
     # НЕОБЯЗАТЕЛЕН, но не молча: если ключ задан и отклонён — это дырка на
-    # 70% картинок ролика, и молчать о ней ровно та ошибка, от которой
-    # заведён этот раздел файла. Если ключа просто нет — генерация целиком
-    # уходит на xAI, футаж и графика через magnific не добираются, и это
-    # штатный режим для канала, где Magnific ещё не подключён.
+    # 70% картинок ролика. Если ключа просто нет — генерация целиком уходит
+    # на xAI, футаж и графика через magnific не добираются — штатный режим
+    # для канала, где Magnific ещё не подключён.
+    #
+    # НЕ через общий probe(): нет подтверждённого дешёвого GET-эндпойнта для
+    # проверки ключа без побочных эффектов (аналитика в документации помечена
+    # «для командных/enterprise аккаунтов» — рабочему ключу без такого
+    # тарифа она может честно ответить отказом, и probe() принял бы это за
+    # мёртвый ключ и уронил бы прогон). Поэтому только информационный запрос,
+    # который никогда не останавливает сборку — окончательная проверка ключа
+    # всё равно происходит на первом реальном вызове images_magnific.
     if magnific:
-        probe("MAGNIFIC_API_KEY", f"{MAGNIFIC_API}/models",
-              {"Authorization": f"Bearer {magnific}"})
+        try:
+            r = requests.get(f"{MAGNIFIC_API}/v1/analytics/team-api-keys",
+                             headers=_magnific_headers(magnific), timeout=30)
+            if r.status_code == 200:
+                log("  + MAGNIFIC_API_KEY: принят")
+            else:
+                log(f"  ? MAGNIFIC_API_KEY: ответ {r.status_code} на "
+                    f"проверочный запрос (эндпойнт для командных тарифов, "
+                    f"отказ здесь не обязательно значит мёртвый ключ) — "
+                    f"{r.text[:160]}")
+        except Exception as e:
+            log(f"  ? MAGNIFIC_API_KEY: сеть недоступна ({e}) — "
+                f"проверить не удалось")
     else:
         log("  . MAGNIFIC_API_KEY: не задан — 100% генерации картинок "
             "уйдёт на xAI, футаж и векторы через magnific добираться не будут")
@@ -1363,11 +1483,23 @@ def fill_missing_footage_via_magnific(job, work: Path):
     клипов футажа ролика (MAGNIFIC_VIDEO_GEN_SHARE) — 60-70% экранного
     времени должны остаться реальным материалом, как было оговорено раньше.
 
-    Без ключа MAGNIFIC_API_KEY — тихо ничего не делает, ролик собирается
-    как раньше, без видео-генерации вовсе.
+    ВЫКЛЮЧЕНО ПО УМОЛЧАНИЮ (magnific_video_gen_enabled=false), и это не
+    перестраховка ради перестраховки. Документация канала описывает
+    видео-генерацию Magnific в разделе «image-to-video» — то есть на входе
+    ожидается ИСХОДНАЯ КАРТИНКА, которую движок оживляет движением, а не
+    голый текстовый промпт. Здесь ниже запрос уходит с одним «prompt», без
+    исходного изображения — это может значить как «параметр не тот»,
+    так и «весь метод вызова не тот» (сначала сгенерировать кадр через
+    Mystic, потом отдать его в Kling/MiniMax/WAN). Включать поле явно —
+    после того, как путь и параметры сверены с
+    /api-reference/image-to-video/<engine>/post-<engine> — иначе первый
+    же платный вызов рискует потратить кредиты впустую или тихо вернуть
+    не то, что ожидалось.
     """
     key = (os.environ.get("MAGNIFIC_API_KEY") or "").strip()
     if not key:
+        return
+    if not job.get("magnific_video_gen_enabled", False):
         return
     man_path = work / "footage" / "_manifest.json"
     man = json.loads(man_path.read_text()) if man_path.exists() else []
@@ -1403,19 +1535,28 @@ def fill_missing_footage_via_magnific(job, work: Path):
     for i, q in enumerate(take):
         model = MAGNIFIC_VIDEO_MODELS[i % len(MAGNIFIC_VIDEO_MODELS)]
         dst = out / f"clip_{n:03d}_magnific.mp4"
-        r = requests.post(f"{MAGNIFIC_API}/videos/generations", timeout=240,
-                          headers={"Authorization": f"Bearer {key}",
-                                   "Content-Type": "application/json"},
-                          json={"model": model, "prompt": q,
-                                "duration_seconds": 2.5})
+        # НЕПОДТВЕРЖДЁННЫЙ ПУТЬ И ПАРАМЕТРЫ — см. предупреждение в шапке
+        # функции. /v1/ai/<engine> — перенос схемы Mystic по аналогии.
+        r = requests.post(f"{MAGNIFIC_API}/v1/ai/{model}", timeout=TIMEOUT,
+                          headers=_magnific_headers(key),
+                          json={"prompt": q, "duration_seconds": 2.5})
         if r.status_code != 200:
-            log(f"  ! magnific видео «{q}» ({model}) не вышло: "
+            log(f"  ! magnific видео «{q}» ({model}) не запустилось: "
                 f"{r.status_code} {r.text[:160]}")
             continue
+        task_id = (r.json().get("data") or {}).get("task_id")
+        if not task_id:
+            log(f"  ! magnific видео «{q}»: в ответе нет task_id")
+            continue
         try:
-            url = r.json()["data"][0]["url"]
-        except (KeyError, IndexError):
-            log(f"  ! magnific видео «{q}»: в ответе нет ссылки")
+            data = _magnific_poll(f"/v1/ai/{model}", task_id, key, timeout=600)
+        except (RuntimeError, TimeoutError) as e:
+            log(f"  ! magnific видео «{q}» ({model}): {e}")
+            continue
+        url = _magnific_generated_url(data)
+        if not url:
+            log(f"  ! magnific видео «{q}»: в ответе нет ссылки "
+                f"({json.dumps(data)[:160]})")
             continue
         if fetch(url, dst):
             got.append({"file": str(dst), "q": q, "src": "magnific_video_gen",
