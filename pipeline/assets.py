@@ -242,13 +242,59 @@ def _duration(p: Path):
 # ────────────────────────── ИЗОБРАЖЕНИЯ ──────────────────────────
 
 XAI = "https://api.x.ai/v1"
+MAGNIFIC_API = "https://api.magnificapi.com/v1"
+
+# Условия оговорены с каналом, не угаданы. 70% генерации картинок уходит на
+# Magnific (безлимит по подписке), 30% остаётся на xAI — ровно то деление,
+# что было раньше на 100% xAI, только теперь основной объём платит подписка,
+# а не поштучная генерация.
+#
+# Видео Magnific генерирует ТОЛЬКО короткими вставками (2-3 с) и ТОЛЬКО туда,
+# где реального футажа по теме не нашлось вообще ни на одном стоке и архиве
+# — не больше 5% клипов ролика. 60-70% экранного времени остаются реальным
+# материалом, как было оговорено раньше; это не новая договорённость, а то
+# же самое число, просто теперь под него явно заведён потолок в коде.
+MAGNIFIC_IMAGE_SHARE = 0.70
+MAGNIFIC_VIDEO_GEN_SHARE = 0.05
+MAGNIFIC_STOCK_DAILY_CAP = 15           # сток Magnific: видео+фото вместе, в сутки
+MAGNIFIC_IMAGE_MODELS = ["flux2pro", "nano-banana2", "seedream5pro"]
+MAGNIFIC_VIDEO_MODELS = ["minimax-hailuo-2.3", "seedance-1.5pro",
+                         "kling-2.5", "wan-2.2"]
 
 
-def images_sync(prompts, out: Path, model, key):
-    """Быстрый режим: по одному запросу, полная цена, готово за минуты."""
+def split_indexed(prompts, share):
+    """
+    Делит промпты между двумя провайдерами по доле, блоками по десять.
+
+    Ровно 70/30 подряд (сначала все magnific, потом весь xAI) означало бы,
+    что первые две трети ролика несут один почерк генерации, а последняя
+    треть — другой, и разница будет видна на стыке. Блок в десять достаточно
+    мелкий, чтобы почерк перемешался по всему ролику, и достаточно крупный,
+    чтобы не дробить запросы к провайдеру по одной картинке за раз.
+
+    Индексы 1-based и совпадают с позицией в job["image_prompts"]: build.py
+    ищет картинку по номеру img_NNN, привязанному к месту в сценарии, а не
+    по порядку в этом вызове.
+    """
+    cut = round(share * 10)
+    a, b = [], []
+    for i, p in enumerate(prompts):
+        (a if i % 10 < cut else b).append((i + 1, p))
+    return a, b
+
+
+def images_sync(indexed_prompts, out: Path, model, key):
+    """
+    Быстрый режим: по одному запросу, полная цена, готово за минуты.
+
+    indexed_prompts — пары (номер_в_сценарии, промпт), а не голый список:
+    вызывающий может прислать не весь сценарий разом, а часть (см. деление
+    с Magnific в main()), и номер файла обязан остаться номером ИЗ
+    СЦЕНАРИЯ, иначе build.py потеряет связь картинки с местом в таймлайне.
+    """
     out.mkdir(parents=True, exist_ok=True)
-    for i, p in enumerate(prompts, 1):
-        dst = out / f"img_{i:03d}.jpg"
+    for idx, p in indexed_prompts:
+        dst = out / f"img_{idx:03d}.jpg"
         if dst.exists():
             continue
         r = requests.post(f"{XAI}/images/generations", timeout=180,
@@ -256,11 +302,54 @@ def images_sync(prompts, out: Path, model, key):
                                    "Content-Type": "application/json"},
                           json={"model": model, "prompt": p, "n": 1})
         if r.status_code != 200:
-            log(f"  ! картинка {i} не вышла: {r.status_code} {r.text[:160]}")
+            log(f"  ! картинка {idx} не вышла: {r.status_code} {r.text[:160]}")
             continue
         url = r.json()["data"][0]["url"]
         dst.write_bytes(requests.get(url, timeout=120).content)
-        log(f"  картинка {i}/{len(prompts)}")
+        log(f"  картинка {idx} (xai)")
+
+
+def images_magnific(indexed_prompts, out: Path, key):
+    """
+    Основной объём картинок ролика (70% по умолчанию) — здесь, через
+    подписку без лимита на генерацию.
+
+    Три модели по кругу (flux2pro, nano-banana2, seedream5pro), а не одна:
+    одна модель на весь объём дала бы ролику ровно тот однородный почерк
+    генерации, от которого и так уводит вектор стиля в variation.py на
+    монтаже — незачем гасить разнообразие здесь, чтобы потом разводить его
+    там.
+
+    Без пакетного режима: подписка безлимитная, экономить не на чем, а
+    курьерский пакет у xAI существует специально ради вдвое меньшей цены,
+    которая тут не нужна.
+
+    ЭНДПОЙНТ ПРЕДПОЛОЖИТЕЛЬНЫЙ. Собран по образцу images_sync (тот же
+    контракт: POST с model/prompt/n, в ответе data[0].url) — сверить путь,
+    имя параметров и формат авторизации с реальной документацией Magnific
+    перед первым платным прогоном.
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    for i, (idx, p) in enumerate(indexed_prompts):
+        dst = out / f"img_{idx:03d}.jpg"
+        if dst.exists():
+            continue
+        model = MAGNIFIC_IMAGE_MODELS[i % len(MAGNIFIC_IMAGE_MODELS)]
+        r = requests.post(f"{MAGNIFIC_API}/images/generations", timeout=180,
+                          headers={"Authorization": f"Bearer {key}",
+                                   "Content-Type": "application/json"},
+                          json={"model": model, "prompt": p, "n": 1})
+        if r.status_code != 200:
+            log(f"  ! magnific картинка {idx} ({model}) не вышла: "
+                f"{r.status_code} {r.text[:160]}")
+            continue
+        try:
+            url = r.json()["data"][0]["url"]
+        except (KeyError, IndexError):
+            log(f"  ! magnific картинка {idx}: в ответе нет ссылки")
+            continue
+        dst.write_bytes(requests.get(url, timeout=120).content)
+        log(f"  картинка {idx} (magnific/{model})")
 
 
 class BatchFailed(RuntimeError):
@@ -290,7 +379,7 @@ class BatchFailed(RuntimeError):
         self.alive = alive
 
 
-def images_batch(prompts, out: Path, model, key, poll=120, max_wait=5400):
+def images_batch(indexed_prompts, out: Path, model, key, poll=120, max_wait=5400):
     """
     Дешёвый режим: пакет заданий, минус 50% от цены, до суток ожидания.
     Ссылки на готовые файлы живут около часа, поэтому качаем сразу
@@ -324,11 +413,11 @@ def images_batch(prompts, out: Path, model, key, poll=120, max_wait=5400):
 
     if not state.exists():
         lines = [json.dumps({
-            "custom_id": f"img_{i:03d}",
+            "custom_id": f"img_{idx:03d}",
             "method": "POST",
             "url": "/v1/images/generations",
             "body": {"model": model, "prompt": p, "n": 1},
-        }) for i, p in enumerate(prompts, 1)]
+        }) for idx, p in indexed_prompts]
         jsonl = out / "requests.jsonl"
         jsonl.write_text("\n".join(lines))
 
@@ -436,15 +525,15 @@ def images_batch(prompts, out: Path, model, key, poll=120, max_wait=5400):
         (out / f"{cid}.jpg").write_bytes(img.content)
         n += 1
 
-    log(f"  скачано {n} картинок из {len(prompts)}")
+    log(f"  скачано {n} картинок из {len(indexed_prompts)}")
     if n == 0:
         raise reset(
             "пакет не отдал ни одной картинки"
             + (f"; первая причина — {why[0]}" if why else "")
             + ". Состояние сброшено, перезапусти")
-    if n < len(prompts):
-        log(f"  ! не хватает {len(prompts) - n} картинок из пакета — "
-            f"их закроет добор в fill_gaps")
+    if n < len(indexed_prompts):
+        log(f"  ! не хватает {len(indexed_prompts) - n} картинок из пакета "
+            f"— их закроет добор в fill_gaps")
     return n
 
 
@@ -836,6 +925,91 @@ def src_wikimedia_video(q, n):
     return out
 
 
+def _magnific_quota_path() -> Path:
+    return Path("work") / "_magnific_daily.json"
+
+
+def _today() -> str:
+    import datetime
+    return datetime.date.today().isoformat()
+
+
+def _magnific_quota_used() -> int:
+    """
+    Сколько единиц уже взято из стока Magnific СЕГОДНЯ.
+
+    Файл общий на все ролики канала, не на один work/<id>: квота — условие
+    самого API-ключа, а не отдельного ролика. Веди счёт per-job — и день с
+    тремя сборками подряд потратит втрое больше квоты, чем API реально даёт.
+    """
+    p = _magnific_quota_path()
+    if not p.exists():
+        return 0
+    try:
+        d = json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return 0
+    if d.get("date") != _today():
+        return 0
+    return int(d.get("used", 0))
+
+
+def _magnific_quota_add(n: int) -> int:
+    p = _magnific_quota_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    used = _magnific_quota_used() + n
+    p.write_text(json.dumps({"date": _today(), "used": used}))
+    return used
+
+
+def src_magnific(q, n):
+    """
+    Сток Magnific — не источник наравне с остальными десятью, а узкая
+    заплатка: уникальные векторы, графика и иллюстрации, которых нет ни у
+    шести открытых архивов, ни у футажных стоков выше. Поэтому его нет ни в
+    VIDEO_SOURCES, ни в PHOTO_SOURCES — вызывается отдельно из
+    fetch_material, и только на запросы, по которым обычные источники
+    вернули пусто.
+
+    ПОТОЛОК 10-15 ЕДИНИЦ В СУТКИ, ОБЩИЙ НА ВИДЕО И ФОТО (MAGNIFIC_STOCK_
+    DAILY_CAP). Хранится в work/_magnific_daily.json и переживает
+    пересборки одного дня: ролику нужно пять-десять пересборок монтажа, и
+    если бы счётчик обнулялся на каждой, суточный лимит стал бы лимитом на
+    прогон.
+
+    ЭНДПОЙНТ ПРЕДПОЛОЖИТЕЛЬНЫЙ — сверить путь и форму ответа с реальной
+    документацией Magnific перед первым платным запросом.
+    """
+    key = (os.environ.get("MAGNIFIC_API_KEY") or "").strip()
+    if not key:
+        return []
+    used = _magnific_quota_used()
+    room = MAGNIFIC_STOCK_DAILY_CAP - used
+    if room <= 0:
+        log(f"    magnific: суточная квота {MAGNIFIC_STOCK_DAILY_CAP} "
+            f"исчерпана, пропускаю «{q}»")
+        return []
+    take = min(n, room)
+    r = requests.get(f"{MAGNIFIC_API}/stock/search", timeout=TIMEOUT,
+                     headers={"Authorization": f"Bearer {key}"},
+                     params={"query": q, "type": "vector,illustration,graphic",
+                             "per_page": take})
+    if not ok(r, "magnific", q):
+        return []
+    out = []
+    for it in r.json().get("results", [])[:take]:
+        url = it.get("url") or it.get("download_url")
+        if not url:
+            continue
+        kind = "video" if it.get("media_type") == "video" else "image"
+        out.append({"url": url, "src": "magnific", "kind": kind})
+    if out:
+        _magnific_quota_add(len(out))
+        log(f"    magnific: взято {len(out)}, квота на сегодня "
+            f"{used + len(out)}/{MAGNIFIC_STOCK_DAILY_CAP}")
+    return out
+
+
 # Источники по умолчанию. Список СВОЙ У КАНАЛА и задаётся в спецификации
 # полями video_sources / photo_sources — здесь только умолчание.
 #
@@ -862,6 +1036,8 @@ ALL_SOURCES = {
     "loc": src_loc,
     "wikimedia": src_wikimedia,
     "nasa": src_nasa,
+    # заплатка, не общий источник — см. src_magnific
+    "magnific": src_magnific,
 }
 
 VIDEO_SOURCES = [src_pexels, src_pixabay, src_archive_org, src_wikimedia_video]
@@ -1033,6 +1209,7 @@ def check_keys():
     xai = os.environ.get("XAI_API_KEY", "").strip()
     pex = os.environ.get("PEXELS_API_KEY", "").strip()
     pix = os.environ.get("PIXABAY_API_KEY", "").strip()
+    magnific = os.environ.get("MAGNIFIC_API_KEY", "").strip()  # необязателен
 
     bad = []
 
@@ -1102,6 +1279,18 @@ def check_keys():
     probe("PIXABAY_API_KEY", "https://pixabay.com/api/",
           None, {"key": pix, "q": "test", "per_page": 3})
 
+    # НЕОБЯЗАТЕЛЕН, но не молча: если ключ задан и отклонён — это дырка на
+    # 70% картинок ролика, и молчать о ней ровно та ошибка, от которой
+    # заведён этот раздел файла. Если ключа просто нет — генерация целиком
+    # уходит на xAI, футаж и графика через magnific не добираются, и это
+    # штатный режим для канала, где Magnific ещё не подключён.
+    if magnific:
+        probe("MAGNIFIC_API_KEY", f"{MAGNIFIC_API}/models",
+              {"Authorization": f"Bearer {magnific}"})
+    else:
+        log("  . MAGNIFIC_API_KEY: не задан — 100% генерации картинок "
+            "уйдёт на xAI, футаж и векторы через magnific добираться не будут")
+
     if bad:
         raise SystemExit(
             "Сервисы не приняли ключи: " + ", ".join(bad) + ".\n"
@@ -1143,6 +1332,98 @@ def fetch_material(job, work: Path):
         ", ".join(f.__name__[4:] for f in phot) + ")")
     gather(job["archive_queries"], max(1, round(4 * over)), phot,
            work / "archive", "arch")
+
+    # ВЕКТОРЫ, ГРАФИКА, ИЛЛЮСТРАЦИИ — отдельный список, необязательный.
+    # Только если ролику они реально нужны (поле graphic_queries непусто).
+    # Сначала пробуем обычные архивы — вдруг что-то найдётся честно; то, что
+    # не нашлось НИГДЕ, добирает Magnific, и только в пределах суточной
+    # квоты (см. src_magnific).
+    graphic_q = job.get("graphic_queries") or []
+    if graphic_q:
+        log(f"── графика/векторы/иллюстрации ({len(graphic_q)} запросов)")
+        gather(graphic_q, max(1, round(3 * over)), phot, work / "archive", "arch")
+        man = work / "archive" / "_manifest.json"
+        found = ({a.get("q") for a in json.loads(man.read_text())}
+                 if man.exists() else set())
+        missing = [q for q in graphic_q if q not in found]
+        if missing:
+            log(f"  ! {len(missing)} тем не нашлось в обычных архивах, "
+                f"добираю уникальные векторы/иллюстрации через magnific "
+                f"(потолок {MAGNIFIC_STOCK_DAILY_CAP}/сутки)")
+            gather(missing, 2, [src_magnific], work / "archive", "arch")
+
+    fill_missing_footage_via_magnific(job, work)
+
+
+def fill_missing_footage_via_magnific(job, work: Path):
+    """
+    Короткие вставки (2-3 с) через Magnific — туда, где реального футажа по
+    теме не нашлось НИ НА ОДНОМ стоке и архиве вообще. Не замена материалу,
+    а заплатка на конкретную дыру, и заплатка ограниченная: не больше 5%
+    клипов футажа ролика (MAGNIFIC_VIDEO_GEN_SHARE) — 60-70% экранного
+    времени должны остаться реальным материалом, как было оговорено раньше.
+
+    Без ключа MAGNIFIC_API_KEY — тихо ничего не делает, ролик собирается
+    как раньше, без видео-генерации вовсе.
+    """
+    key = (os.environ.get("MAGNIFIC_API_KEY") or "").strip()
+    if not key:
+        return
+    man_path = work / "footage" / "_manifest.json"
+    man = json.loads(man_path.read_text()) if man_path.exists() else []
+    real_q = {m.get("q") for m in man if m.get("src") != "magnific_video_gen"}
+    missing_q = [q for q in job.get("footage_queries", []) if q not in real_q]
+    if not missing_q:
+        return
+
+    share = float(job.get("magnific_video_share", MAGNIFIC_VIDEO_GEN_SHARE))
+    # Знаменатель — уже скачанный реальный футаж, а не план кадров: план
+    # складывается позже, в build.py, и здесь его ещё нет. Приближение
+    # грубое, но потолок и должен быть с запасом консервативным, а не точным
+    # до клипа.
+    total_clips = len(man) or len(job.get("footage_queries", []))
+    cap = max(0, round(total_clips * share))
+    already = sum(1 for m in man if m.get("src") == "magnific_video_gen")
+    room = cap - already
+    if room <= 0:
+        log(f"  ! футажа не нашлось по {len(missing_q)} темам, но потолок "
+            f"генерации через magnific ({cap} клипов, {share*100:.0f}% "
+            f"от {total_clips}) уже исчерпан")
+        return
+
+    take = missing_q[:room]
+    log(f"  ! реального футажа не нашлось по {len(missing_q)} темам; "
+        f"генерирую короткие вставки через magnific ({len(take)} шт, "
+        f"потолок {share*100:.0f}%)")
+    out = work / "footage"
+    have = [int(p.name.split("_")[1]) for p in out.glob("clip_*")
+            if p.name.split("_")[1].isdigit()]
+    n = max(have) + 1 if have else 0
+    got = []
+    for i, q in enumerate(take):
+        model = MAGNIFIC_VIDEO_MODELS[i % len(MAGNIFIC_VIDEO_MODELS)]
+        dst = out / f"clip_{n:03d}_magnific.mp4"
+        r = requests.post(f"{MAGNIFIC_API}/videos/generations", timeout=240,
+                          headers={"Authorization": f"Bearer {key}",
+                                   "Content-Type": "application/json"},
+                          json={"model": model, "prompt": q,
+                                "duration_seconds": 2.5})
+        if r.status_code != 200:
+            log(f"  ! magnific видео «{q}» ({model}) не вышло: "
+                f"{r.status_code} {r.text[:160]}")
+            continue
+        try:
+            url = r.json()["data"][0]["url"]
+        except (KeyError, IndexError):
+            log(f"  ! magnific видео «{q}»: в ответе нет ссылки")
+            continue
+        if fetch(url, dst):
+            got.append({"file": str(dst), "q": q, "src": "magnific_video_gen",
+                        "kind": "video", "model": model})
+            log(f"  clip {n:03d}: magnific/{model} — сгенерировано, «{q}»")
+            n += 1
+    if got:
+        man_path.write_text(json.dumps(man + got, indent=1))
 
 
 def fill_gaps(job, work: Path, total: float, model, key):
@@ -1303,8 +1584,22 @@ def main(job_path, stage="all"):
 
     log("── изображения")
     key = os.environ["XAI_API_KEY"].strip()
+    magnific_key = (os.environ.get("MAGNIFIC_API_KEY") or "").strip()
     model = job.get("image_model", "grok-imagine-image")
     prompts = job["image_prompts"]
+
+    # РАЗДЕЛЕНИЕ 70/30. Без ключа Magnific — всё как раньше, 100% на xAI:
+    # это старый канал без подписки на Magnific, и поведение не должно
+    # меняться только оттого, что функция теперь умеет больше.
+    if magnific_key:
+        share = float(job.get("magnific_image_share", MAGNIFIC_IMAGE_SHARE))
+        p_magnific, p_xai = split_indexed(prompts, share)
+        log(f"  разделение генерации: {len(p_magnific)} magnific / "
+            f"{len(p_xai)} xai ({share*100:.0f}/{(1-share)*100:.0f})")
+        images_magnific(p_magnific, work / "images", magnific_key)
+    else:
+        p_xai = list(enumerate(prompts, 1))
+
     if job.get("batch", True):
         # Пакет вдвое дешевле, но он же вдвое ненадёжнее: он может
         # закрыться пустым, протухнуть или потерять файл результатов.
@@ -1312,7 +1607,7 @@ def main(job_path, stage="all"):
         # сделана и уже оплачена, и потерять её из-за неудачного пакета
         # дороже, чем добрать картинки поштучно по полной цене.
         try:
-            images_batch(prompts, work / "images", model, key)
+            images_batch(p_xai, work / "images", model, key)
         except BatchFailed as e:
             if e.alive:
                 # Пакет жив и будет выставлен в счёт. Уйти сейчас в
@@ -1326,9 +1621,9 @@ def main(job_path, stage="all"):
             log(f"  ! пакет не сложился: {e}")
             log("  перехожу на поштучную генерацию (полная цена вместо "
                 "половинной) — иначе теряется уже оплаченная озвучка")
-            images_sync(prompts, work / "images", model, key)
+            images_sync(p_xai, work / "images", model, key)
     else:
-        images_sync(prompts, work / "images", model, key)
+        images_sync(p_xai, work / "images", model, key)
 
     # ПРОВЕРКА СРАЗУ, А НЕ НА МОНТАЖЕ. Без этой строки пустая папка
     # картинок доезжала до build.py, то есть до момента, когда уже
@@ -1338,9 +1633,11 @@ def main(job_path, stage="all"):
     if not made:
         raise SystemExit(
             "генерация не дала ни одной картинки.\n"
-            "Ни пакетом, ни поштучно — значит, дело не в пакете, а в "
-            "ключе XAI_API_KEY, в модели (" + model + ") или в самих "
-            "промптах: их мог отклонить фильтр содержания.\n"
+            "Ни magnific, ни пакетом xAI, ни поштучно — значит, дело не в "
+            "пакете, а в ключах (XAI_API_KEY" +
+            (", MAGNIFIC_API_KEY" if magnific_key else "") +
+            "), в модели (" + model + ") или в самих промптах: их мог "
+            "отклонить фильтр содержания.\n"
             "Причины по каждому промпту напечатаны выше.")
     log(f"  картинок готово: {made} из {len(prompts)}")
 
