@@ -70,6 +70,34 @@ def read_srt(path: Path):
     return cues
 
 
+def as_list(value, field="tags", sep=","):
+    """
+    Приводит поле спецификации к списку. Строку разбирает по разделителю.
+
+    Спецификации роликов пишутся в чате и приезжают JSON-ом, и строка
+    вместо списка — опечатка, которую глазами не видно: в файле лежит
+    "тег один, тег два", выглядит совершенно нормально.
+
+    А дальше `", ".join(строка)` перебирает её ПОСИМВОЛЬНО и склеивает
+    буквы через запятую. На ff-ep05 это дало 341 «тег» по одной букве и
+    строку в 1021 символ при лимите в 500 — то есть падение на самом
+    последнем шаге, уже ПОСЛЕ полного монтажа. Дороже места для отказа в
+    этом конвейере нет.
+
+    Поэтому не роняем, а чиним и предупреждаем: намерение автора здесь
+    однозначно, разделитель тот же самый, и терять из-за него сорок минут
+    рендера незачем.
+    """
+    if not value:
+        return []
+    if isinstance(value, str):
+        out = [t.strip() for t in value.split(sep) if t.strip()]
+        log(f"  ! {field} записаны строкой, а не списком — разобрал на "
+            f"{len(out)} шт. Поправь в спецификации: \"{field}\": [...]")
+        return out
+    return [str(t).strip() for t in value if str(t).strip()]
+
+
 def stamp(sec: float) -> str:
     h, r = divmod(int(sec), 3600)
     m, s = divmod(r, 60)
@@ -120,8 +148,9 @@ def description(job, chaps, total):
     if y.get("description_notes"):
         parts += ["", y["description_notes"].strip()]
     parts += ["", f"{lab['runtime']}: {stamp(total)}"]
-    if y.get("hashtags"):
-        parts += ["", " ".join(y["hashtags"])]
+    hashtags = as_list(y.get("hashtags"), "hashtags")
+    if hashtags:
+        parts += ["", " ".join(hashtags)]
     return "\n".join(parts)
 
 
@@ -217,7 +246,7 @@ def main(job_path):
     chaps = chapters(job, read_srt(srt))
     y = job["youtube"]
 
-    tags = ", ".join(y.get("tags") or [])
+    tags = ", ".join(as_list(y.get("tags"), "tags"))
     if len(tags) > TAGS_LIMIT:
         raise SystemExit(f"теги занимают {len(tags)} символов при лимите {TAGS_LIMIT}")
 

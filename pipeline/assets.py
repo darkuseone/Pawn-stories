@@ -263,14 +263,64 @@ def images_sync(prompts, out: Path, model, key):
         log(f"  картинка {i}/{len(prompts)}")
 
 
-def images_batch(prompts, out: Path, model, key, poll=120):
+class BatchFailed(RuntimeError):
+    """
+    Пакет не отдал ни одной картинки.
+
+    Отдельный тип исключения нужен, чтобы вызывающий мог отличить «пакет
+    не сложился, пробуй поштучно» от настоящей поломки сети или ключа и
+    не глотать вторую под видом первой.
+
+    alive различает два принципиально разных случая, и путать их дорого:
+
+      alive=False  пакет мёртв (провалился, протух, потерял файл
+                   результатов). Ждать нечего, состояние сброшено, и
+                   поштучная догенерация — единственный способ спасти
+                   уже оплаченную озвучку.
+
+      alive=True   пакет ЖИВ, просто долгий. Состояние сохранено. Уходить
+                   здесь в поштучную генерацию нельзя: пакет всё равно
+                   досчитается и всё равно будет выставлен в счёт, и мы
+                   заплатим за одни и те же картинки дважды — сначала
+                   половинную цену за пакет, потом полную за поштучные.
+    """
+
+    def __init__(self, message, alive=False):
+        super().__init__(message)
+        self.alive = alive
+
+
+def images_batch(prompts, out: Path, model, key, poll=120, max_wait=5400):
     """
     Дешёвый режим: пакет заданий, минус 50% от цены, до суток ожидания.
     Ссылки на готовые файлы живут около часа, поэтому качаем сразу
     как только пакет закрылся.
+
+    ПУСТОЙ ПАКЕТ — ЭТО ОШИБКА, А НЕ РЕЗУЛЬТАТ. Так этот код и подвёл на
+    прогоне ff-ep05: пакет ушёл, вернулся без единой картинки, функция
+    написала «скачано 0 картинок» и вернула управление как ни в чём не
+    бывало. Дальше отработали отбраковка и добор материала, пакет
+    уехал в кэш, и падение случилось только на монтаже — через десять
+    минут и уже после того, как за озвучку заплачено.
+
+    Отдельная беда была в том, что ноль картинок НЕ СБРАСЫВАЛ состояние:
+    `_batch.json` с мёртвым идентификатором уезжал в кэш, и каждый
+    следующий запуск доставал его оттуда, опрашивал давно закрытый пакет
+    и снова получал ноль. Ролик залипал намертво, и починить это можно
+    было только руками, вычистив кэш.
+
+    Теперь: pending==0 проверяется вместе с терминальным состоянием
+    пакета, наличие output_file_id проверяется явно, код ответа при
+    скачивании проверяется явно, и на нуле картинок состояние удаляется,
+    а наверх летит BatchFailed.
     """
     out.mkdir(parents=True, exist_ok=True)
     state = out / "_batch.json"
+
+    def reset(reason):
+        """Сносит состояние, чтобы следующий запуск отправил пакет заново."""
+        state.unlink(missing_ok=True)
+        return BatchFailed(reason)
 
     if not state.exists():
         lines = [json.dumps({
@@ -298,34 +348,104 @@ def images_batch(prompts, out: Path, model, key, poll=120):
         log(f"  пакет отправлен: {b.json().get('batch_id')}")
 
     bid = json.loads(state.read_text()).get("batch_id")
+    if not bid:
+        raise reset("в _batch.json нет batch_id; состояние сброшено, "
+                    "перезапусти — пакет уйдёт заново")
 
+    waited, s = 0, {}
     while True:
-        s = requests.get(f"{XAI}/batches/{bid}", timeout=TIMEOUT,
-                         headers={"Authorization": f"Bearer {key}"}).json()
-        pending = s.get("state", {}).get("num_pending", 0)
+        r = requests.get(f"{XAI}/batches/{bid}", timeout=TIMEOUT,
+                         headers={"Authorization": f"Bearer {key}"})
+        if r.status_code != 200:
+            # 404 значит, что пакета больше нет: он протух или его снесли.
+            # Держаться за такое состояние незачем, оно уже никогда не
+            # закроется — сбрасываем, чтобы перезапуск отправил новый.
+            if r.status_code == 404:
+                raise reset(f"пакет {bid} не найден ({r.status_code}); "
+                            f"состояние сброшено, перезапусти")
+            raise BatchFailed(f"опрос пакета {bid}: {r.status_code} "
+                              f"{r.text[:200]}")
+        s = r.json()
+        st = s.get("state", {}) or {}
+        pending = st.get("num_pending", 0)
         if pending == 0:
             break
+        if waited >= max_wait:
+            # Состояние НЕ трогаем: пакет живой, просто долгий. Следующий
+            # запуск подхватит его же и, скорее всего, застанет готовым —
+            # платить за него второй раз незачем.
+            raise BatchFailed(
+                f"пакет {bid} не закрылся за {max_wait // 60} мин "
+                f"(в очереди {pending}). Состояние сохранено: запусти "
+                f"этап assets ещё раз, пакет будет подхвачен, а не оплачен "
+                f"заново",
+                alive=True)
         log(f"  в очереди {pending}, жду {poll} сек")
         time.sleep(poll)
+        waited += poll
+
+    # НОЛЬ В ОЧЕРЕДИ ЕЩЁ НЕ ЗНАЧИТ УСПЕХ. Ровно так же выглядит пакет,
+    # который целиком провалился: заданий в работе не осталось, только
+    # все они в num_failed. Раньше эти два случая были неразличимы.
+    st = s.get("state", {}) or {}
+    done = st.get("num_succeeded", st.get("num_completed", 0))
+    failed = st.get("num_failed", 0)
+    if failed:
+        log(f"  ! в пакете провалилось заданий: {failed}")
 
     ofid = s.get("output_file_id")
-    body = requests.get(f"{XAI}/files/{ofid}/content", timeout=TIMEOUT,
-                        headers={"Authorization": f"Bearer {key}"}).text
-    n = 0
-    for line in body.splitlines():
+    if not ofid:
+        raise reset(
+            f"пакет {bid} закрылся без файла результатов "
+            f"(готово {done}, провалено {failed}, статус "
+            f"{s.get('status') or st.get('status') or '?'}). "
+            f"Состояние сброшено, перезапусти")
+
+    resp = requests.get(f"{XAI}/files/{ofid}/content", timeout=TIMEOUT,
+                        headers={"Authorization": f"Bearer {key}"})
+    if resp.status_code != 200:
+        raise reset(f"файл результатов {ofid}: {resp.status_code} "
+                    f"{resp.text[:200]}; состояние сброшено, перезапусти")
+
+    n, why = 0, []
+    for line in resp.text.splitlines():
         if not line.strip():
             continue
-        rec = json.loads(line)
-        cid = rec.get("custom_id", "")
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            why.append(f"неразбираемая строка: {line[:120]}")
+            continue
+        cid = rec.get("custom_id") or "?"
         try:
             url = rec["response"]["body"]["data"][0]["url"]
         except Exception:
-            log(f"  ! {cid} без результата")
+            # Причина отказа лежит в самой записи, и её надо ПОКАЗАТЬ.
+            # Раньше печаталось голое «без результата», по которому нельзя
+            # понять ни что случилось, ни что чинить.
+            err = (rec.get("error") or {}).get("message") \
+                or json.dumps(rec.get("response", rec))[:200]
+            log(f"  ! {cid} без результата: {err}")
+            why.append(f"{cid}: {err}")
             continue
-        (out / f"{cid}.jpg").write_bytes(
-            requests.get(url, timeout=120).content)
+        img = requests.get(url, timeout=120)
+        if img.status_code != 200:
+            log(f"  ! {cid}: ссылка отдала {img.status_code}")
+            why.append(f"{cid}: ссылка {img.status_code}")
+            continue
+        (out / f"{cid}.jpg").write_bytes(img.content)
         n += 1
-    log(f"  скачано {n} картинок")
+
+    log(f"  скачано {n} картинок из {len(prompts)}")
+    if n == 0:
+        raise reset(
+            "пакет не отдал ни одной картинки"
+            + (f"; первая причина — {why[0]}" if why else "")
+            + ". Состояние сброшено, перезапусти")
+    if n < len(prompts):
+        log(f"  ! не хватает {len(prompts) - n} картинок из пакета — "
+            f"их закроет добор в fill_gaps")
+    return n
 
 
 # ────────────────────────── АРХИВЫ ──────────────────────────
@@ -1066,12 +1186,45 @@ def fill_gaps(job, work: Path, total: float, model, key):
     shots = max(8, int(total / base))
     need_real = int(shots * (1 - share) / 2.5)
 
-    log(f"  реального материала {real}, под ролик нужно около {need_real}")
-    if real >= need_real:
+    # have_gen СЧИТАЛСЯ И НЕ ИСПОЛЬЗОВАЛСЯ — мёртвая переменная, ровно та
+    # ошибка, от которой заведён smoke.py. Из-за неё добор смотрел только
+    # на реальный материал: на прогоне ff-ep05 генерация дала ноль картинок,
+    # реального материала было 45 при нужных 25, добор честно решил, что
+    # всё в порядке, и молча вышел. Ноль генерации при заказанных 33%
+    # экранного времени — это дырка на треть ролика, и заметить её здесь
+    # было можно.
+    need_gen = int(shots * share / 2.5) if share > 0 else 0
+    log(f"  реального материала {real}, под ролик нужно около {need_real}; "
+        f"генерации {have_gen}, нужно около {need_gen}")
+    if share > 0 and have_gen == 0:
+        raise SystemExit(
+            f"генерации нет ни одной картинки при заказанных "
+            f"{share*100:.0f}% экранного времени.\n"
+            f"Это дырка на треть ролика, и закрывать её повтором архива "
+            f"нельзя. Смотри выше, чем закончился этап изображений.")
+
+    if real >= need_real and have_gen >= need_gen:
         return
+    if real >= need_real:
+        # реального хватает, не хватает именно генерации — добираем её
+        missing = min(max(need_gen - have_gen, 0),
+                      int(job.get("fill_limit", 24)))
+        if not missing:
+            return
+        log(f"  ! генерации не хватает {need_gen - have_gen}; "
+            f"догенерирую {missing} кадров")
+        return _fill_generate(job, work, missing, model, key)
     missing = min(need_real - real, int(job.get("fill_limit", 24)))
     log(f"  ! не хватает {need_real - real}; догенерирую {missing} кадров")
+    return _fill_generate(job, work, missing, model, key)
 
+
+def _fill_generate(job, work: Path, missing: int, model, key):
+    """
+    Собственно добор генерацией. Вынесено из fill_gaps, потому что вызывать
+    его нужно из двух мест: когда не хватает реального материала и когда не
+    хватает самой генерации.
+    """
     # Промпты добора: из спецификации, иначе строятся из архивных запросов —
     # они описывают ровно те предметы, которых не нашлось настоящими.
     base_prompts = job.get("fill_prompts") or [
@@ -1085,11 +1238,13 @@ def fill_gaps(job, work: Path, total: float, model, key):
 
     out = work / "images"
     out.mkdir(parents=True, exist_ok=True)
+    got = 0
     # Нумерация с 900: добор не должен перебить основные промпты, которые
     # привязаны к порядку сценария номерами img_001..img_0NN.
     for k in range(missing):
         dst = out / f"img_{900 + k:03d}.jpg"
         if dst.exists():
+            got += 1
             continue
         p = base_prompts[k % len(base_prompts)]
         r = requests.post(f"{XAI}/images/generations", timeout=180,
@@ -1105,6 +1260,7 @@ def fill_gaps(job, work: Path, total: float, model, key):
             log(f"  ! добор {k+1}: в ответе нет ссылки")
             continue
         dst.write_bytes(requests.get(url, timeout=120).content)
+        got += 1
         log(f"  добор {k+1}/{missing}")
     # промпты добора кладутся рядом: build.py возьмёт из них слова для
     # смыслового подбора, иначе эти кадры лягут под текст случайно
@@ -1112,6 +1268,9 @@ def fill_gaps(job, work: Path, total: float, model, key):
         json.dumps([base_prompts[k % len(base_prompts)]
                     for k in range(missing)], ensure_ascii=False),
         encoding="utf-8")
+    if got < missing:
+        log(f"  ! добор дал {got} из {missing} — остальное закроют повторы")
+    return got
 
 
 def main(job_path, stage="all"):
@@ -1147,9 +1306,43 @@ def main(job_path, stage="all"):
     model = job.get("image_model", "grok-imagine-image")
     prompts = job["image_prompts"]
     if job.get("batch", True):
-        images_batch(prompts, work / "images", model, key)
+        # Пакет вдвое дешевле, но он же вдвое ненадёжнее: он может
+        # закрыться пустым, протухнуть или потерять файл результатов.
+        # Ронять на этом ВЕСЬ прогон нельзя — озвучка к этому моменту уже
+        # сделана и уже оплачена, и потерять её из-за неудачного пакета
+        # дороже, чем добрать картинки поштучно по полной цене.
+        try:
+            images_batch(prompts, work / "images", model, key)
+        except BatchFailed as e:
+            if e.alive:
+                # Пакет жив и будет выставлен в счёт. Уйти сейчас в
+                # поштучную генерацию значит оплатить одни и те же
+                # картинки дважды. Останавливаемся; состояние сохранено,
+                # перезапуск подхватит пакет там же, где бросили.
+                raise SystemExit(
+                    f"{e}\n\nПоштучную догенерацию НЕ запускаю: пакет живой "
+                    f"и всё равно будет оплачен, а поштучная стоила бы "
+                    f"вдвое дороже за те же картинки.")
+            log(f"  ! пакет не сложился: {e}")
+            log("  перехожу на поштучную генерацию (полная цена вместо "
+                "половинной) — иначе теряется уже оплаченная озвучка")
+            images_sync(prompts, work / "images", model, key)
     else:
         images_sync(prompts, work / "images", model, key)
+
+    # ПРОВЕРКА СРАЗУ, А НЕ НА МОНТАЖЕ. Без этой строки пустая папка
+    # картинок доезжала до build.py, то есть до момента, когда уже
+    # отработали отбраковка зрением и добор материала, а пустой результат
+    # уехал в кэш. Падать надо там, где сломалось.
+    made = len(list((work / "images").glob("img_*.jpg")))
+    if not made:
+        raise SystemExit(
+            "генерация не дала ни одной картинки.\n"
+            "Ни пакетом, ни поштучно — значит, дело не в пакете, а в "
+            "ключе XAI_API_KEY, в модели (" + model + ") или в самих "
+            "промптах: их мог отклонить фильтр содержания.\n"
+            "Причины по каждому промпту напечатаны выше.")
+    log(f"  картинок готово: {made} из {len(prompts)}")
 
     fetch_material(job, work)
 
