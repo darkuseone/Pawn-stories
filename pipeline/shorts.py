@@ -20,6 +20,15 @@ shorts.py — два вертикальных ролика из уже собр�
 Побочная выгода: шортс гарантированно совпадает с роликом, на который
 ведёт. Отдельная сборка со своим жребием этого не гарантирует.
 
+Свой вопрос под каждый шортс
+----------------------------
+Два куска почти всегда режутся из разных историй ролика (разных
+script_blocks) — общий вопрос на оба либо не относится ко второму, либо
+выдаёт его развязку заранее. open_loop.questions в спецификации — карта
+{"номер_блока": "вопрос"}, ключ строкой (JSON не умеет int-ключи). Блок
+куска берётся из beat.block; если для него нет записи — используется
+общий open_loop.question, как раньше. Поле необязательное целиком.
+
 Почему ffmpeg, а не Remotion или HyperFrames
 --------------------------------------------
 Оба движка рисуют кадр браузером и снимают его покадрово. На двух шортсах
@@ -366,8 +375,11 @@ def main(job_path, want=2):
     if not marks or total <= 0:
         raise SystemExit("нет тайм-кодов или пустой ролик")
 
-    question = ((job.get("open_loop") or {}).get("question") or "").strip()
-    if not question:
+    loop = job.get("open_loop") or {}
+    default_question = (loop.get("question") or "").strip()
+    per_block = {str(k): v.strip() for k, v in (loop.get("questions") or {}).items()
+                if v and v.strip()}
+    if not default_question and not per_block:
         # Не падаем: шортс без шапки — рабочий шортс. Но молчать нельзя,
         # вопрос в шапке это и есть причина досмотреть.
         log("  ! в спецификации нет open_loop.question — шортсы будут без "
@@ -389,13 +401,20 @@ def main(job_path, want=2):
             f"{total/60:.1f} мин, а куски не должны пересекаться и стоять "
             f"вплотную — на коротком ролике второго места не остаётся")
 
-    made = []
+    made, questions_used = [], []
     for n, (t0, t1, lo, hi, beat) in enumerate(windows, 1):
+        # Свой вопрос под свой блок сценария, а не один на оба шортса: два
+        # куска почти всегда режутся из РАЗНЫХ историй ролика (разные
+        # script_blocks), и общий вопрос либо не относится ко второму
+        # шортсу, либо выдаёт его развязку раньше, чем видео до неё дошло.
+        # per_block ключуется строкой номера блока (JSON не умеет int-ключи).
+        question = per_block.get(str(beat.block), default_question)
         words = words_with_times(marks, lo, hi, t0)
         ass = build_ass(words, question, out / f"short_{n}.ass")
         dst = out / f"short_{n}.mp4"
         log(f"── шортс {n}: {t0:.1f}–{t1:.1f} с ({t1-t0:.1f} с), "
-            f"доля «{beat.kind}», слов {len(words)}")
+            f"доля «{beat.kind}», блок {beat.block}, слов {len(words)}, "
+            f"вопрос: {question or '(нет)'}")
         render_short(final, t0, t1, ass, dst,
                      crf=int((job.get("style_override") or {}).get("crf", 20)),
                      has_question=bool(question))
@@ -404,11 +423,13 @@ def main(job_path, want=2):
             log(f"  ! {got:.1f} с — длиннее 60, YouTube не примет как Shorts")
         log(f"  {dst.name}: {got:.1f} с, {dst.stat().st_size/1048576:.1f} МБ")
         made.append(dst)
+        questions_used.append(question)
 
     (out / "shorts.json").write_text(json.dumps([
         {"file": p.name, "start": round(w[0], 2), "end": round(w[1], 2),
-         "beat": w[4].kind, "question": question}
-        for p, w in zip(made, windows)], ensure_ascii=False, indent=1),
+         "beat": w[4].kind, "block": w[4].block, "question": q}
+        for p, w, q in zip(made, windows, questions_used)],
+        ensure_ascii=False, indent=1),
         encoding="utf-8")
     log(f"── готово: {len(made)} шортса")
     return made

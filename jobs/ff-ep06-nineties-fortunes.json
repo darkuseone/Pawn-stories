@@ -186,6 +186,12 @@
   "open_loop": {
     "question": "Which of these 3 people actually got rich?",
     "question_block": 1,
-    "payoff_block": 5
-  }
+    "payoff_block": 5,
+    "questions": {
+      "1": "How much did a retired worker get paid for the gold he found?",
+      "2": "Did the $5 thrift-store painting ever sell for millions?",
+      "3": "What happened to the man who found $150 million in sunken gold?"
+    }
+  },
+  "cover_text_by_model": true
 }
