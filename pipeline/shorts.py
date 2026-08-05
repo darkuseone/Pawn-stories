@@ -181,20 +181,36 @@ def pick_windows(beats, marks, total, want=2):
     Два шортса из соседних абзацев — это один и тот же шортс дважды: то же
     место ролика, тот же материал в кадре, тот же смысл. Поэтому второй
     берётся только если он отстоит от первого.
+
+    Первый проход берёт кандидатов ТОЛЬКО из ещё не занятых script_blocks:
+    лучшая развязка по числам не обязана распределяться по одной на блок
+    (число может оказаться там, где чисел просто больше), и без этого
+    условия оба куска на ff-ep06 достались одному и тому же блоку — с
+    одним и тем же вопросом в шапке у обоих, что и обесценивает вопрос.
+    Второй проход снимает ограничение по блоку и просто добирает
+    недостающее — на коротком ролике с одной сильной развязкой второго
+    блока может не быть вовсе, и это не повод остаться без второго шортса.
     """
-    out = []
-    for _, b in rank_beats(beats):
-        w = window_for(b, marks, total)
-        if not w:
-            continue
-        t0, t1 = w[0], w[1]
-        if any(not (t1 <= o0 or t0 >= o1) for o0, o1, *_ in out):
-            continue        # пересекается с уже взятым
-        if any(min(abs(t0 - o1), abs(o0 - t1)) < 12.0 for o0, o1, *_ in out):
-            continue        # стоит вплотную
-        out.append((t0, t1, w[2], w[3], b))
-        if len(out) >= want:
-            break
+    def take(candidates, out, require_new_block):
+        for _, b in candidates:
+            if len(out) >= want:
+                break
+            if require_new_block and any(b.block == o[4].block for o in out):
+                continue
+            w = window_for(b, marks, total)
+            if not w:
+                continue
+            t0, t1 = w[0], w[1]
+            if any(not (t1 <= o0 or t0 >= o1) for o0, o1, *_ in out):
+                continue        # пересекается с уже взятым
+            if any(min(abs(t0 - o1), abs(o0 - t1)) < 12.0 for o0, o1, *_ in out):
+                continue        # стоит вплотную
+            out.append((t0, t1, w[2], w[3], b))
+        return out
+
+    ranked = rank_beats(beats)
+    out = take(ranked, [], require_new_block=True)
+    out = take(ranked, out, require_new_block=False)
     return out
 
 
