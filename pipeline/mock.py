@@ -30,6 +30,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from jobspec import load_job
+
 CHARS_PER_SECOND = 15.0     # темп диктора, из задания
 PAUSE = 0.35                # пауза между предложениями
 IMG_W, IMG_H = 1536, 864
@@ -141,7 +143,7 @@ def make_clips(out: Path, count: int, seconds=14.0):
 
 
 def main(job_path):
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job = load_job(job_path)
     work = Path("work") / job["id"] / "assets"
     work.mkdir(parents=True, exist_ok=True)
 
@@ -176,7 +178,21 @@ def main(job_path):
     log(f"архив     : добавлено {n}, "
         f"всего {len(list((work / 'archive').glob('arch_*')))}")
 
-    n = make_clips(work / "footage", max(6, len(job.get("footage_queries", []))))
+    # ФУТАЖ ПРОВИЗИОНИТСЯ ПО ПЛАНУ, а не по числу запросов.
+    #
+    # Раньше здесь стояло max(6, len(footage_queries)) — то есть на
+    # получасовой ролик синтетика давала шесть-десять клипов при потолке
+    # повторов 3. Монтаж честно упирался в нехватку, rails.py честно писал
+    # «155 кадров подряд без единой вставки видео», и смоук показывал
+    # слайдшоу, которого в боевом прогоне нет: там gather качает по семь
+    # клипов на запрос с запасом 40%.
+    #
+    # Тест, который врёт в сторону паники, чинят дольше, чем баг: на него
+    # уходит время, а чинить нечего. Считаем столько же, сколько просит
+    # план (assets.clips_needed), плюс запас на отбраковку.
+    import assets as assets_mod
+    want_clips = max(6, int(assets_mod.clips_needed(job, total) * 1.4))
+    n = make_clips(work / "footage", want_clips)
     log(f"футаж     : добавлено {n}, "
         f"всего {len(list((work / 'footage').glob('clip_*')))}")
 

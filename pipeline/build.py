@@ -30,6 +30,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from jobspec import load_job
+
 import channel
 import render
 import vet
@@ -1345,7 +1347,7 @@ def ensure_overlays(st):
 # ───────────────────────── ГЛАВНОЕ ─────────────────────────
 
 def main(job_path):
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job = load_job(job_path)
     base = Path("work") / job["id"]
     assets = base / "assets"
     tmp = base / "tmp"
@@ -1426,7 +1428,7 @@ def main(job_path):
     # схлопывается в череду фотографий с одинаковым наездом независимо от
     # того, какой богатый вектор стиля ему достался.
     log("── проверка плана на признаки шаблона")
-    findings = rails.audit(shots, st.vector, getattr(st, "beats", None))
+    findings = rails.audit(shots, st.vector, getattr(st, "beats", None), job)
     metrics = rails.metrics(shots)
     hard = rails.report(findings, log)
     log(f"  разброс длительностей {metrics['cv_duration']}, "

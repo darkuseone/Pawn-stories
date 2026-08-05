@@ -37,8 +37,6 @@
   "_цветокор": "Не oak_brass и не long_footage — их занял pawn-01, channel.py это проверяет. Здесь ламповый свет: самый вечерний из тёплой семьи, под истории про чердаки и лавки после закрытия.",
   "lut": "lamp_glow",
   "archive_lut": "archive_paper",
-  "batch": false,
-  "material_overshoot": 1.4,
   "fill_limit": 24,
   "_отбраковка": "Робот отбирает материал сам: дешёвый локальный проход плюс проверка зрением через xAI. vet_vision:false выключает зрение и оставляет только локальные проверки.",
   "vet_vision": true,
@@ -148,11 +146,6 @@
     "arch": []
   },
   "style_override": {
-    "_доля": "30% экранного времени — генерация. Если реального не хватит после отбраковки, fill_gaps догенерирует и доля поднимется — это видно в логе сборки.",
-    "generated_share": 0.3,
-    "_сжатие": "20 минут при crf 22 — около 550 МБ, с большим запасом до лимита GitHub Releases в 2 ГБ.",
-    "crf": 22,
-    "_темп": "Тело ролика. Двадцать минут при базе 4.6 секунды — примерно 230 кадров.",
     "base_duration_range": [
       4.2,
       5.4
@@ -161,7 +154,6 @@
       1.1,
       1.3
     ],
-    "_вступление": "ТРИ МИНУТЫ быстрой перебивки. Куски по 2-5 секунд: именно первые минуты решают удержание, и длинный кадр здесь стоит дороже всего. Доля видео поднята до 0.65 — движение держит лучше фотографии.",
     "intro_footage_seconds": 185,
     "intro_clip_duration_range": [
       2,
@@ -194,19 +186,7 @@
       0.7,
       1.3
     ],
-    "hard_cut_probability": 0.0,
-    "_эффекты": "Убраны vhs_dark, prism_1 и technicolor_flash: расслоение каналов и призматическая кайма — приёмы про технику и цифру, на лавке древностей читаются как брак.",
-    "effects_enabled": true,
-    "effect_probability": 0.28,
-    "effects": [
-      "vintage_blemish",
-      "charcoal_film",
-      "sunset_2",
-      "heat_print",
-      "brass_gleam",
-      "by_the_fireplace"
-    ],
-    "fps": 30
+    "effect_probability": 0.28
   },
   "youtube": {
     "title": "The Three Dollar Bowl: How Priceless Things End Up at Yard Sales",

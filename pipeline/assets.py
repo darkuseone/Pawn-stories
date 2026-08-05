@@ -22,6 +22,8 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+from jobspec import load_job
 import vet
 
 UA = {"User-Agent": "sleep-docs-pipeline/1.0 (educational video project)"}
@@ -1863,7 +1865,7 @@ def _fill_generate(job, work: Path, missing: int, model, key):
 
 
 def main(job_path, stage="all"):
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job = load_job(job_path)
     work = Path("work") / job["id"] / "assets"
     work.mkdir(parents=True, exist_ok=True)
 

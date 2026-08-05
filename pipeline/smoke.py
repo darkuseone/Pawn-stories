@@ -26,9 +26,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from jobspec import load_job
+
 
 def main(job_path):
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job = load_job(job_path)
     work = Path("work") / job["id"] / "assets"
     if not work.exists():
         raise SystemExit(

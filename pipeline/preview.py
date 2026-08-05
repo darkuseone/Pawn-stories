@@ -23,6 +23,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from jobspec import load_job
+
 from PIL import Image, ImageDraw, ImageFont
 
 COLS = 5
@@ -135,7 +137,7 @@ def sheet(files, out: Path, kind: str, rejected):
 
 
 def main(job_path):
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job = load_job(job_path)
     base = Path("work") / job["id"]
     assets, out = base / "assets", base / "out"
     out.mkdir(parents=True, exist_ok=True)

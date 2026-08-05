@@ -25,6 +25,8 @@ import sys
 import unicodedata
 from pathlib import Path
 
+from jobspec import load_job
+
 W_THUMB, H_THUMB = 1280, 720
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
 FONT_PLAIN = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
@@ -229,7 +231,7 @@ def thumbnail(video: Path, out: Path, at: float, title: str, style="lower_left")
 
 
 def main(job_path):
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job = load_job(job_path)
     if "youtube" not in job:
         raise SystemExit("в спецификации нет блока youtube — заполнять нечего")
 
@@ -275,8 +277,19 @@ def main(job_path):
     if style_card.exists():
         thumb_style = json.loads(style_card.read_text(encoding="utf-8")).get(
             "thumb_style", thumb_style)
-    thumb = thumbnail(video, out / "thumbnail.jpg", at, y["title"], thumb_style)
-    log(f"превью : раскладка {thumb_style}")
+    # ХОЗЯИН thumbnail.jpg — covers.py, если он уже отработал. Он делает три
+    # обложки с крупным белым заголовком слева и кладёт первую сюда же.
+    # Здесь остался кадровый вариант со сменной раскладкой: он ничего не
+    # стоит и работает без ключей, но перетирать им готовые обложки нельзя —
+    # порядок шагов в workflow не должен решать, какое превью уедет к
+    # человеку.
+    if (out / "cover_1.jpg").exists():
+        thumb = out / "thumbnail.jpg"
+        log("превью : уже сделано covers.py (три обложки), не трогаю")
+    else:
+        thumb = thumbnail(video, out / "thumbnail.jpg", at, y["title"],
+                          thumb_style)
+        log(f"превью : раскладка {thumb_style}")
 
     log(f"главы  : {len(chaps)}, первая с 00:00, последняя с {stamp(chaps[-1][0])}")
     log(f"теги   : {len(tags)} символов из {TAGS_LIMIT}")
