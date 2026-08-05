@@ -386,7 +386,15 @@ def main(job_path, want=2):
     if not final.exists():
         raise SystemExit(f"нет {final} — сначала собери ролик (build.py)")
 
-    marks = json.loads((assets / "marks.json").read_text(encoding="utf-8"))
+    # marks_final.json — тайм-коды на шкале ГОТОВОГО final.mp4: если build.py
+    # вставлял паузы перед главами, final.mp4 длиннее исходной начитки, и
+    # резать куски по assets/marks.json (шкала БЕЗ пауз) значило бы всё время
+    # промахиваться на накопленную сумму пауз. Без этого файла (старые
+    # эпизоды, собранные до правки) — обычный assets/marks.json, как раньше.
+    marks_path = out / "marks_final.json"
+    if not marks_path.exists():
+        marks_path = assets / "marks.json"
+    marks = json.loads(marks_path.read_text(encoding="utf-8"))
     total = duration_of(final)
     if not marks or total <= 0:
         raise SystemExit("нет тайм-кодов или пустой ролик")

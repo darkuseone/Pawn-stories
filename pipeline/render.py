@@ -171,6 +171,77 @@ def render_footage_clip(src: Path, out: Path, dur: float, start: float = 0.0,
     run(cmd)
 
 
+# Шрифт карточки главы — тот же список кандидатов, что и у textcard.py:
+# DejaVu стоит на раннере GitHub Actions, остальное — запасной путь для
+# локального прогона на другой машине.
+CARD_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+]
+
+
+def _card_font():
+    for p in CARD_FONT_CANDIDATES:
+        if Path(p).exists():
+            return p
+    return None
+
+
+def _wrap_card_text(text: str, per_line: int = 24):
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        probe = f"{cur} {w}".strip()
+        if len(probe) > per_line and cur:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = probe
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def render_card(text: str, out: Path, dur: float):
+    """
+    Чёрная карточка с названием главы — пауза перед новой историей.
+
+    Чёрный кадр с текстом, а не наплыв поверх материала: тайминг ставит
+    паузу настоящей тишиной в звуке (см. build.py, voice_with_pauses), а
+    картинка должна недвусмысленно сигналить «здесь начинается следующая
+    часть», а не мелькнуть посреди прежней сцены.
+
+    Текст идёт через textfile, не через text=: у названий глав попадаются
+    апострофы и двоеточия, а textfile не требует их экранировать вовсе —
+    та же причина, по которой covers.py и shorts.py избегают ручного
+    экранирования там, где можно.
+
+    Кодируется теми же параметрами, что и обычный кадр (crf 18, veryfast,
+    yuv420p): join() выше по конвейеру ГРЕЙДИТ и склеивает кадры между
+    собой одинаково для любого kind, включая card — отдельный цветокор
+    или его отсутствие для карточки означали бы правку join(), а сейчас
+    карточка просто ещё один вход в ту же цепочку фильтров.
+    """
+    font = _card_font()
+    draw = ""
+    txt_path = out.with_suffix(".txt")
+    if font:
+        txt_path.write_text("\n".join(_wrap_card_text(text)), encoding="utf-8")
+        fade = min(0.6, dur / 4)
+        alpha = (f"if(lt(t\\,{fade:.2f})\\,t/{fade:.2f}\\,"
+                f"if(gt(t\\,{dur - fade:.2f})\\,({dur:.2f}-t)/{fade:.2f}\\,1))")
+        draw = (f",drawtext=fontfile={shlex.quote(font)}:"
+                f"textfile={shlex.quote(str(txt_path))}:"
+                f"fontcolor=white:fontsize=66:line_spacing=16:"
+                f"x=(w-text_w)/2:y=(h-text_h)/2:alpha='{alpha}'")
+    cmd = (f"ffmpeg -y -f lavfi -i color=c=black:s={W}x{H}:r={FPS}:d={dur:.3f} "
+           f"-vf {shlex.quote('format=yuv420p' + draw)} "
+           f"-c:v libx264 -crf 18 -preset veryfast -pix_fmt yuv420p -an "
+           f"{shlex.quote(str(out))}")
+    run(cmd)
+    txt_path.unlink(missing_ok=True)
+
+
 def concat_segments(segments, out: Path):
     """Финальная склейка без перекодирования — быстро и без потерь."""
     lst = out.parent / "concat.txt"
