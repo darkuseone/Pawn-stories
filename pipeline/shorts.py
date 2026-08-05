@@ -294,7 +294,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 # ─────────────────────── РЕНДЕР ───────────────────────
 
 def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
-                 crf: int = 20):
+                 crf: int = 20, has_question: bool = True):
     """
     Вырезает кусок, разворачивает в 9:16 и накладывает шапку и субтитры.
 
@@ -306,18 +306,29 @@ def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
     -ss ДО -i, а не после: так ffmpeg перематывает по ключевым кадрам и не
     декодирует всё от начала файла. На получасовом ролике разница — секунды
     против минут.
+
+    has_question=False УБИРАЕТ ОБЕ ПОЛОСЫ drawbox, а не только текст. Раньше
+    рамка рисовалась всегда, а текст в неё клала build_ass() только если
+    question был непустым — без вопроса в кадре повисала пустая белая
+    коробка без единой буквы внутри. Пустая рамка хуже отсутствующей: она
+    занимает 20% кадра, ничего не сообщая.
     """
     box_h = int(H * BOX_SHARE)
     # 1080 * 9/16 = 607.5; libx264 требует чётные размеры, берём 608
     crop_w = 608
+    box = ""
+    if has_question:
+        # белая рамка-шапка: заливка белым, поверх неё вопрос из ASS
+        box = (
+            f"drawbox=x={BOX_MARGIN}:y={BOX_MARGIN}:w={W-2*BOX_MARGIN}:h={box_h}:"
+            f"color=white@0.92:t=fill,"
+            f"drawbox=x={BOX_MARGIN}:y={BOX_MARGIN}:w={W-2*BOX_MARGIN}:h={box_h}:"
+            f"color=white:t=4,"
+        )
     vf = (
         f"crop={crop_w}:1080:(iw-{crop_w})/2:0,"
         f"scale={W}:{H}:flags=lanczos,setsar=1,"
-        # белая рамка-шапка: заливка белым, поверх неё вопрос из ASS
-        f"drawbox=x={BOX_MARGIN}:y={BOX_MARGIN}:w={W-2*BOX_MARGIN}:h={box_h}:"
-        f"color=white@0.92:t=fill,"
-        f"drawbox=x={BOX_MARGIN}:y={BOX_MARGIN}:w={W-2*BOX_MARGIN}:h={box_h}:"
-        f"color=white:t=4,"
+        f"{box}"
         f"ass={ass.as_posix()}"
     )
     run(["ffmpeg", "-v", "error", "-y",
@@ -386,7 +397,8 @@ def main(job_path, want=2):
         log(f"── шортс {n}: {t0:.1f}–{t1:.1f} с ({t1-t0:.1f} с), "
             f"доля «{beat.kind}», слов {len(words)}")
         render_short(final, t0, t1, ass, dst,
-                     crf=int((job.get("style_override") or {}).get("crf", 20)))
+                     crf=int((job.get("style_override") or {}).get("crf", 20)),
+                     has_question=bool(question))
         got = duration_of(dst)
         if got > 60.5:
             log(f"  ! {got:.1f} с — длиннее 60, YouTube не примет как Shorts")

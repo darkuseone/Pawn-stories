@@ -213,7 +213,7 @@ jobs:
       # обложки и кладёт первую в thumbnail.jpg, а youtube.py, увидев
       # cover_1.jpg, свой кадровый вариант уже не рисует. Поменяй шаги
       # местами — и к человеку уедет превью попроще.
-      - name: Этап 3 — три обложки
+      - name: Этап 3 — две обложки
         if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         env:
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
@@ -249,8 +249,8 @@ jobs:
           ls -la "$DIR"
 
       # Всё, что нужно человеку, одной ссылкой: длинный ролик, два шортса,
-      # три обложки и субтитры. Шортсы и обложки помечены звёздочкой — на
-      # коротком ролике второго шортса может не быть, и это не ошибка.
+      # две обложки и субтитры. Шортсы помечены звёздочкой — на коротком
+      # ролике второго шортса может не быть, и это не ошибка.
       - name: Выдаём ролик, шортсы и обложки
         if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         uses: softprops/action-gh-release@v2
@@ -261,7 +261,7 @@ jobs:
             Длинный ролик, шортсов ${{ steps.out.outputs.shorts }}, обложек ${{ steps.out.outputs.covers }}.
 
             `subs.srt` — субтитры для ручной заливки на YouTube после выкладки ролика.
-            `cover_1.jpg` продублирован в `thumbnail.jpg`; `cover_2/3` — запасные варианты.
+            `cover_1.jpg` продублирован в `thumbnail.jpg`; `cover_2.jpg` — запасной вариант.
           files: |
             ${{ steps.out.outputs.dir }}/final.mp4
             ${{ steps.out.outputs.dir }}/subs.srt

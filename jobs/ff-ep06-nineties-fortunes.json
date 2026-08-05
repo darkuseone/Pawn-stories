@@ -182,5 +182,10 @@
     "overlay_text": "3 FOUND FORTUNES. ONLY 1 PAID OFF.",
     "text_placement": "left third, vertically centred, large bold white text",
     "prompt": "Hyperrealistic 16:9 thumbnail: a gloved hand lifting ancient gold coins from dark soil under dramatic side lighting, with a subtle hint of dripped abstract paint texture and hazy deep-sea shipwreck lights in the background. The LEFT THIRD of the frame is left empty, dark, unlit — reserved for large white bold text with black outline, added separately. Do NOT render any text, letters or logos in the image itself. Photorealistic, cinematic lighting, 8k, sharp focus."
+  },
+  "open_loop": {
+    "question": "Which of these 3 people actually got rich?",
+    "question_block": 1,
+    "payoff_block": 5
   }
 }
