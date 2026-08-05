@@ -1,145 +1,131 @@
 {
- "id": "ff-ep05-chamberlain-jacket",
- "topic": {
-  "slug": "chamberlain-jacket-goodwill-2026",
-  "keywords": [
-   "Wilt Chamberlain warm-up jacket",
-   "Goodwill thrift store find",
-   "Sotheby's sports memorabilia auction",
-   "1972 NBA Finals Lakers",
-   "photo-matched game-worn authentication",
-   "Oregon teenager reseller",
-   "thrift flip treasure story",
-   "sports memorabilia market"
-  ]
- },
- "voice_settings": {
-  "stability": 0.33,
-  "similarity": 0.72,
-  "style": 0.2
- },
- "bed_gain_db": -27.0,
- "batch": true,
- "material_overshoot": 1.4,
- "fill_limit": 30,
- "vet_vision": true,
- "photo_sources": [
-  "met",
-  "artic",
-  "cleveland",
-  "loc",
-  "wikimedia"
- ],
- "video_sources": [
-  "pexels",
-  "pixabay",
-  "archive_org",
-  "wikimedia_video"
- ],
- "script_blocks": [
-  "Here's the ending, before the setup. Sotheby's opened the bidding on a warm-up jacket with an estimate as high as two hundred fifty thousand dollars, and when the gavel came down on a Monday in July, forty-eight bids later, the final number was eighty-nine thousand six hundred dollars. That is still roughly thirty thousand times what a teenager paid for it at a Goodwill outlet in Oregon back in January. But if the only number you remember from this story is two hundred fifty thousand, you are remembering the marketing, not the outcome — and the gap between those two figures is, honestly, the more interesting story here. I want to be upfront about two things most versions of this story get a little sloppy about. First, this is not a jersey. It is a warm-up jacket — the kind a player wears in the layup line before tip-off, not during the game itself. Second, the jacket is tied to the spring of 1972, when the Lakers beat the Knicks in five games for the franchise's first Los Angeles championship, and Chamberlain collected the only Finals MVP trophy of his career. A few of the write-ups on this story call that his 'final season.' It wasn't. His actual final season came a year later, in 1972-73, and it ended with the Lakers losing the rematch to the same Knicks team. Small mix-up, but it's the kind of detail a story about paying close attention shouldn't get wrong. Soft goods like this jacket — cloth, not a numbered jersey — rarely survive fifty years without ending up in a landfill or a costume box. This one ended up in a donation bin.",
-  "The find itself took about four seconds. At a Goodwill Outlet — the kind of store where clothes get dumped into large rolling bins and sold by the pound instead of sorted onto racks — a teenage reseller was working through a bin of donated clothing when he spotted a purple-and-gold jacket in someone else's hands, tossed back onto the pile a moment later. He picked it up instead. The tag on the inside read Champion, the manufacturer the NBA used for its warm-up gear through the 1970s, and the cut and lettering matched Lakers gear from that era closely enough that he decided it was worth the three dollars and seven cents in his pocket. What happened next is the part I actually find more impressive than the discovery. He didn't just resell it. He researched it — comparing stitching patterns, checking the proportions against Chamberlain's listed height of seven foot one, cross-referencing period photography. That is not luck; that is homework, done by a nineteen-year-old with no formal training, purely because he didn't want to be wrong in public. He posted a photo online. Sotheby's noticed, and reached out about consigning the piece rather than him having to shop it around. An armored van, by his own account, is not something you expect to see outside a thrift store — but that is what showed up to collect it.",
-  "Authentication for game-worn clothing is stricter than people assume. A signature can be forged. A team tag can be swapped onto a different garment. What Sotheby's did instead was photo-match the jacket — lining up its stitching, its wear patterns, and small manufacturing quirks against period photographs of Chamberlain actually wearing it during that 1972 series. Their own listing calls matching a piece of soft, game-worn clothing to a specific playoff run 'genuinely exceptional,' and I don't think that's just auction-house flattery. A numbered jersey is comparatively easy to match — the number is right there. A plain warm-up jacket has none of that; the case rests entirely on details most of us would never think to check. Here's where I'll push back a little on the tidy version of this story. The narrative everyone tells is 'thrift shopper gets lucky.' What actually happened is closer to this: a discarded jacket survived fifty-plus years by accident, and then survived a second, much narrower gate — a buyer with enough patience to authenticate it properly instead of flipping it for two hundred dollars on the spot, which is exactly what most resellers would have done, and which would have ended the story right there. It's a slower, less telegenic kind of detective work than this story usually gets credit for, and it is the actual reason the jacket is worth anything at all beyond nostalgia.",
-  "So why did it sell for less than half the top estimate? Estimates aren't promises — they're a range built from comparable sales, and the comparables here were thin. Chamberlain's actual 1972 Finals jersey, the one with his number on it, sold for four point nine million dollars back in 2023. A different Chamberlain warm-up jacket brought fifty-six thousand four hundred dollars in 2022. Sotheby's range of one hundred fifty to two hundred fifty thousand dollars sat between those two data points, betting buyers would treat a photo-matched jacket closer to the jersey than to the plain jacket. Forty-eight bids later, the market landed closer to the jacket. Soft goods, it turns out, are still soft goods, even with documentation behind them. I'll say the quiet part: eighty-nine thousand six hundred dollars for three dollars and seven cents spent is not a story that needed the extra hundred and sixty thousand to be worth telling. I've covered thrift-store windfalls on this channel before, and it would be easy to let every one of them blur into the same shape — impossible luck, huge check, roll credits. This one is different because the payoff wasn't really the point. The research was. The three dollars bought him a lottery ticket; the homework is what turned it into an actual, defensible sale. That's a less cinematic lesson than 'you could get lucky too' — but it's the true one."
- ],
- "image_prompts": [
-  "Hands sorting through a large thrift store donation bin filled with folded clothing, warm overhead lighting, anonymous person, face out of frame, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
-  "Close-up of a vintage purple and gold sports jacket fabric with a faded manufacturer tag stitched inside the collar, shallow focus on stitching detail, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
-  "A cluttered authentication desk with a magnifying glass, old photographs, and a folded vintage jacket under a warm desk lamp, no visible faces, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
-  "Silhouette of an anonymous teenager walking out of a thrift store entrance at dusk carrying a folded jacket over one shoulder, back to camera, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
-  "Empty vintage 1970s basketball arena bench and warm-up area, worn wooden floor, soft golden afternoon light, no people, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
-  "Auction house interior with a wooden gavel resting on a podium, rows of empty seats softly blurred in the background, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
-  "Close-up of an antique sewing machine and thread spools on a wooden workbench, evoking vintage garment manufacturing, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
-  "A stack of old sports photographs and negatives spread across a wooden table, magnifying glass resting on top, warm lamp light, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9"
- ],
- "footage_queries": [
-  "thrift store clothing rack",
-  "donation bin sorting hands",
-  "vintage basketball court",
-  "auction paddle bidding",
-  "gavel auction house",
-  "sewing machine close up",
-  "old photographs table",
-  "magnifying glass documents",
-  "empty arena bleachers",
-  "warehouse clothing bins"
- ],
- "archive_queries": [
-  "Wilt Chamberlain 1972",
-  "Los Angeles Lakers 1972",
-  "NBA Finals 1972",
-  "vintage basketball photograph",
-  "1970s sports photography",
-  "Lakers warm-up jacket",
-  "Wilt Chamberlain portrait",
-  "1970s NBA action photo"
- ],
- "reject": {
-  "clip": [],
-  "arch": []
- },
- "style_override": {
-  "generated_share": 0.33
- },
- "_источники": {
-  "policy": "Every core claim tagged VERIFIED / SINGLE SOURCE / DISPUTED / LEGEND. Disputed items are flagged in narration, not asserted.",
-  "do_not_claim": [
-   "Не утверждать, что итоговая цена продажи — $250,000: это верхняя граница до-аукционной оценки Sotheby's. Реальная цена закрытия — $89,600 (48 ставок, AP/KATU, закрытие 20 июля 2026).",
-   "Не называть предмет 'формой/джерси' — это warm-up jacket (разминочная куртка Champion), не игровая форма с номером.",
-   "Не утверждать, что находка сделана в Value Village — фото Value Village в Тигарде (WaPo) сделано позже для съёмки материала; сама находка, по AP/KATU/Antique Trader, произошла в январе 2026 в Goodwill Outlet в Хиллсборо, Орегон.",
-   "Не называть сезон 1972-73 'чемпионским' или связывать его с MVP Финала — чемпионство и единственный MVP Финала Чемберлена относятся к весне 1972 (сезон 1971-72); сезон 1972-73 был его последним игровым сезоном, но закончился поражением Лейкерс в Финале. Часть источников (Yahoo/KPTV, informedclearly) путают это.",
-   "Полное имя нашедшего не педалировать в тегах/заголовке — см. правило раздела 6 и прецедент ff-ep03."
+  "id": "ff-ep05-chamberlain-jacket",
+  "topic": {
+    "slug": "chamberlain-jacket-goodwill-2026",
+    "keywords": [
+      "Wilt Chamberlain warm-up jacket",
+      "Goodwill thrift store find",
+      "Sotheby's sports memorabilia auction",
+      "1972 NBA Finals Lakers",
+      "photo-matched game-worn authentication",
+      "Oregon teenager reseller",
+      "thrift flip treasure story",
+      "sports memorabilia market"
+    ]
+  },
+  "voice_settings": {
+    "stability": 0.33,
+    "similarity": 0.72,
+    "style": 0.2
+  },
+  "bed_gain_db": -27.0,
+  "batch": true,
+  "fill_limit": 30,
+  "vet_vision": true,
+  "script_blocks": [
+    "Here's the ending, before the setup. Sotheby's opened the bidding on a warm-up jacket with an estimate as high as two hundred fifty thousand dollars, and when the gavel came down on a Monday in July, forty-eight bids later, the final number was eighty-nine thousand six hundred dollars. That is still roughly thirty thousand times what a teenager paid for it at a Goodwill outlet in Oregon back in January. But if the only number you remember from this story is two hundred fifty thousand, you are remembering the marketing, not the outcome — and the gap between those two figures is, honestly, the more interesting story here. I want to be upfront about two things most versions of this story get a little sloppy about. First, this is not a jersey. It is a warm-up jacket — the kind a player wears in the layup line before tip-off, not during the game itself. Second, the jacket is tied to the spring of 1972, when the Lakers beat the Knicks in five games for the franchise's first Los Angeles championship, and Chamberlain collected the only Finals MVP trophy of his career. A few of the write-ups on this story call that his 'final season.' It wasn't. His actual final season came a year later, in 1972-73, and it ended with the Lakers losing the rematch to the same Knicks team. Small mix-up, but it's the kind of detail a story about paying close attention shouldn't get wrong. Soft goods like this jacket — cloth, not a numbered jersey — rarely survive fifty years without ending up in a landfill or a costume box. This one ended up in a donation bin.",
+    "The find itself took about four seconds. At a Goodwill Outlet — the kind of store where clothes get dumped into large rolling bins and sold by the pound instead of sorted onto racks — a teenage reseller was working through a bin of donated clothing when he spotted a purple-and-gold jacket in someone else's hands, tossed back onto the pile a moment later. He picked it up instead. The tag on the inside read Champion, the manufacturer the NBA used for its warm-up gear through the 1970s, and the cut and lettering matched Lakers gear from that era closely enough that he decided it was worth the three dollars and seven cents in his pocket. What happened next is the part I actually find more impressive than the discovery. He didn't just resell it. He researched it — comparing stitching patterns, checking the proportions against Chamberlain's listed height of seven foot one, cross-referencing period photography. That is not luck; that is homework, done by a nineteen-year-old with no formal training, purely because he didn't want to be wrong in public. He posted a photo online. Sotheby's noticed, and reached out about consigning the piece rather than him having to shop it around. An armored van, by his own account, is not something you expect to see outside a thrift store — but that is what showed up to collect it.",
+    "Authentication for game-worn clothing is stricter than people assume. A signature can be forged. A team tag can be swapped onto a different garment. What Sotheby's did instead was photo-match the jacket — lining up its stitching, its wear patterns, and small manufacturing quirks against period photographs of Chamberlain actually wearing it during that 1972 series. Their own listing calls matching a piece of soft, game-worn clothing to a specific playoff run 'genuinely exceptional,' and I don't think that's just auction-house flattery. A numbered jersey is comparatively easy to match — the number is right there. A plain warm-up jacket has none of that; the case rests entirely on details most of us would never think to check. Here's where I'll push back a little on the tidy version of this story. The narrative everyone tells is 'thrift shopper gets lucky.' What actually happened is closer to this: a discarded jacket survived fifty-plus years by accident, and then survived a second, much narrower gate — a buyer with enough patience to authenticate it properly instead of flipping it for two hundred dollars on the spot, which is exactly what most resellers would have done, and which would have ended the story right there. It's a slower, less telegenic kind of detective work than this story usually gets credit for, and it is the actual reason the jacket is worth anything at all beyond nostalgia.",
+    "So why did it sell for less than half the top estimate? Estimates aren't promises — they're a range built from comparable sales, and the comparables here were thin. Chamberlain's actual 1972 Finals jersey, the one with his number on it, sold for four point nine million dollars back in 2023. A different Chamberlain warm-up jacket brought fifty-six thousand four hundred dollars in 2022. Sotheby's range of one hundred fifty to two hundred fifty thousand dollars sat between those two data points, betting buyers would treat a photo-matched jacket closer to the jersey than to the plain jacket. Forty-eight bids later, the market landed closer to the jacket. Soft goods, it turns out, are still soft goods, even with documentation behind them. I'll say the quiet part: eighty-nine thousand six hundred dollars for three dollars and seven cents spent is not a story that needed the extra hundred and sixty thousand to be worth telling. I've covered thrift-store windfalls on this channel before, and it would be easy to let every one of them blur into the same shape — impossible luck, huge check, roll credits. This one is different because the payoff wasn't really the point. The research was. The three dollars bought him a lottery ticket; the homework is what turned it into an actual, defensible sale. That's a less cinematic lesson than 'you could get lucky too' — but it's the true one."
   ],
-  "primary_sources": [
-   "Washington Post",
-   "Associated Press",
-   "Sotheby's (auction listing)",
-   "KATU (Portland)",
-   "KPTV (Portland)"
-  ]
- },
- "youtube": {
-  "title": "$3 Thrift Jacket vs. Sotheby's $250K Estimate",
-  "title_alternatives": [
-   "$3 Goodwill Jacket, $250K Estimate, Real Sale Price",
-   "He Paid $3 for NBA History — Then Came the Real Number"
+  "image_prompts": [
+    "Hands sorting through a large thrift store donation bin filled with folded clothing, warm overhead lighting, anonymous person, face out of frame, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Close-up of a vintage purple and gold sports jacket fabric with a faded manufacturer tag stitched inside the collar, shallow focus on stitching detail, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "A cluttered authentication desk with a magnifying glass, old photographs, and a folded vintage jacket under a warm desk lamp, no visible faces, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Silhouette of an anonymous teenager walking out of a thrift store entrance at dusk carrying a folded jacket over one shoulder, back to camera, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Empty vintage 1970s basketball arena bench and warm-up area, worn wooden floor, soft golden afternoon light, no people, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Auction house interior with a wooden gavel resting on a podium, rows of empty seats softly blurred in the background, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Close-up of an antique sewing machine and thread spools on a wooden workbench, evoking vintage garment manufacturing, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "A stack of old sports photographs and negatives spread across a wooden table, magnifying glass resting on top, warm lamp light, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9"
   ],
-  "description_intro": "A nineteen-year-old paid $3.07 for a jacket at a Goodwill outlet in Oregon. Sotheby's matched it to Wilt Chamberlain's 1972 Finals run and estimated it could bring up to $250,000. The auction already closed — and the real number tells a better story than the headline does.",
-  "chapters": [
-   "The Real Number Comes First",
-   "Grabbed From the Discard Pile",
-   "What Photo-Matching Actually Proves",
-   "Why the Real Price Beat the Estimate"
+  "footage_queries": [
+    "thrift store clothing rack",
+    "donation bin sorting hands",
+    "vintage basketball court",
+    "auction paddle bidding",
+    "gavel auction house",
+    "sewing machine close up",
+    "old photographs table",
+    "magnifying glass documents",
+    "empty arena bleachers",
+    "warehouse clothing bins"
   ],
-  "description_notes": "Estimate was $150,000–$250,000; actual final sale $89,600 (48 bids, Sotheby's, closed July 20, 2026). Jacket is tied to the 1972 NBA Finals (Chamberlain's Finals MVP series, spring 1972) — not his final NBA season, which was 1972-73. Find location per AP/KATU: Goodwill Outlet, Hillsboro, OR, January 2026.",
-  "hashtags": [
-   "#ThriftStoreFind",
-   "#SportsMemorabilia",
-   "#WiltChamberlain",
-   "#Sothebys",
-   "#TreasureHunting"
+  "archive_queries": [
+    "Wilt Chamberlain 1972",
+    "Los Angeles Lakers 1972",
+    "NBA Finals 1972",
+    "vintage basketball photograph",
+    "1970s sports photography",
+    "Lakers warm-up jacket",
+    "Wilt Chamberlain portrait",
+    "1970s NBA action photo"
   ],
-  "tags": [
-   "thrift store find",
-   "Goodwill treasure",
-   "sports memorabilia auction",
-   "Wilt Chamberlain jacket",
-   "Sotheby's auction house",
-   "vintage Lakers warm-up jacket",
-   "1972 NBA Finals",
-   "game-worn memorabilia",
-   "resale flipping story",
-   "hidden treasure discovery",
-   "thrift store flipping",
-   "auction authentication",
-   "sports collectibles market",
-   "vintage sportswear collecting"
-  ],
-  "thumbnail_at": 460.0
- },
- "_превью_промпт": {
-  "overlay_text": "FROM $3 TO $89,600",
-  "text_placement": "left third, vertically centred, large bold white text",
-  "prompt": "Hyperrealistic 16:9 thumbnail. A weathered purple and gold vintage warm-up jacket laid open on a wooden auction house table under dramatic spotlight, small authentication tags and a magnifying glass beside it, dark moody background. The LEFT THIRD of the frame is left empty, dark, unlit — reserved for large white bold text with black outline, added separately. Do NOT render any text, letters or logos in the image itself. Photorealistic, cinematic lighting, 8k, sharp focus."
- }
+  "reject": {
+    "clip": [],
+    "arch": []
+  },
+  "style_override": {
+    "generated_share": 0.33
+  },
+  "_источники": {
+    "policy": "Every core claim tagged VERIFIED / SINGLE SOURCE / DISPUTED / LEGEND. Disputed items are flagged in narration, not asserted.",
+    "do_not_claim": [
+      "Не утверждать, что итоговая цена продажи — $250,000: это верхняя граница до-аукционной оценки Sotheby's. Реальная цена закрытия — $89,600 (48 ставок, AP/KATU, закрытие 20 июля 2026).",
+      "Не называть предмет 'формой/джерси' — это warm-up jacket (разминочная куртка Champion), не игровая форма с номером.",
+      "Не утверждать, что находка сделана в Value Village — фото Value Village в Тигарде (WaPo) сделано позже для съёмки материала; сама находка, по AP/KATU/Antique Trader, произошла в январе 2026 в Goodwill Outlet в Хиллсборо, Орегон.",
+      "Не называть сезон 1972-73 'чемпионским' или связывать его с MVP Финала — чемпионство и единственный MVP Финала Чемберлена относятся к весне 1972 (сезон 1971-72); сезон 1972-73 был его последним игровым сезоном, но закончился поражением Лейкерс в Финале. Часть источников (Yahoo/KPTV, informedclearly) путают это.",
+      "Полное имя нашедшего не педалировать в тегах/заголовке — см. правило раздела 6 и прецедент ff-ep03."
+    ],
+    "primary_sources": [
+      "Washington Post",
+      "Associated Press",
+      "Sotheby's (auction listing)",
+      "KATU (Portland)",
+      "KPTV (Portland)"
+    ]
+  },
+  "youtube": {
+    "title": "$3 Thrift Jacket vs. Sotheby's $250K Estimate",
+    "title_alternatives": [
+      "$3 Goodwill Jacket, $250K Estimate, Real Sale Price",
+      "He Paid $3 for NBA History — Then Came the Real Number"
+    ],
+    "description_intro": "A nineteen-year-old paid $3.07 for a jacket at a Goodwill outlet in Oregon. Sotheby's matched it to Wilt Chamberlain's 1972 Finals run and estimated it could bring up to $250,000. The auction already closed — and the real number tells a better story than the headline does.",
+    "chapters": [
+      "The Real Number Comes First",
+      "Grabbed From the Discard Pile",
+      "What Photo-Matching Actually Proves",
+      "Why the Real Price Beat the Estimate"
+    ],
+    "description_notes": "Estimate was $150,000–$250,000; actual final sale $89,600 (48 bids, Sotheby's, closed July 20, 2026). Jacket is tied to the 1972 NBA Finals (Chamberlain's Finals MVP series, spring 1972) — not his final NBA season, which was 1972-73. Find location per AP/KATU: Goodwill Outlet, Hillsboro, OR, January 2026.",
+    "hashtags": [
+      "#ThriftStoreFind",
+      "#SportsMemorabilia",
+      "#WiltChamberlain",
+      "#Sothebys",
+      "#TreasureHunting"
+    ],
+    "tags": [
+      "thrift store find",
+      "Goodwill treasure",
+      "sports memorabilia auction",
+      "Wilt Chamberlain jacket",
+      "Sotheby's auction house",
+      "vintage Lakers warm-up jacket",
+      "1972 NBA Finals",
+      "game-worn memorabilia",
+      "resale flipping story",
+      "hidden treasure discovery",
+      "thrift store flipping",
+      "auction authentication",
+      "sports collectibles market",
+      "vintage sportswear collecting"
+    ],
+    "thumbnail_at": 460.0
+  },
+  "_превью_промпт": {
+    "overlay_text": "FROM $3 TO $89,600",
+    "text_placement": "left third, vertically centred, large bold white text",
+    "prompt": "Hyperrealistic 16:9 thumbnail. A weathered purple and gold vintage warm-up jacket laid open on a wooden auction house table under dramatic spotlight, small authentication tags and a magnifying glass beside it, dark moody background. The LEFT THIRD of the frame is left empty, dark, unlit — reserved for large white bold text with black outline, added separately. Do NOT render any text, letters or logos in the image itself. Photorealistic, cinematic lighting, 8k, sharp focus."
+  }
 }

@@ -38,6 +38,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from jobspec import load_job
+
 ROOT = Path(__file__).parent.parent
 LOG = ROOT / "channel" / "log.json"
 
@@ -206,7 +208,7 @@ def record(job_path, test=False):
     пересобранный десять раз ролик не должен десять раз занимать место в
     списке недавних и выталкивать оттуда настоящие.
     """
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job = load_job(job_path)
     card_path = ROOT / "work" / job["id"] / "out" / "style.json"
     if not card_path.exists():
         raise SystemExit(f"нет {card_path} — сначала собери ролик")
@@ -242,7 +244,7 @@ def main(argv):
 
     cmd = argv[1]
     if cmd == "check":
-        job = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
+        job = load_job(argv[2])
         problems = check(job)
         if not problems:
             log("не повтор: тема и настройки расходятся с недавними")

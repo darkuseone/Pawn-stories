@@ -43,6 +43,8 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from jobspec import load_job
+
 XAI = "https://api.x.ai/v1"
 
 # Модель зрения НЕ ЗАШИТА. Первый боевой прогон упёрся в
@@ -585,7 +587,7 @@ def rejected_from(work: Path):
 
 
 def main(job_path):
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job = load_job(job_path)
     work = Path("work") / job["id"] / "assets"
     if not work.exists():
         raise SystemExit(f"нет {work} — сначала собери материал")

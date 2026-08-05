@@ -293,6 +293,12 @@ class StyleEngine:
         self.rng = random.Random(seed_from(video_id) + 17)
         r = self.rng
 
+        # Своя лента для эффектов — см. комментарий в effect(). Число
+        # обращений к ней зависит от контекста кадра, и на общей ленте это
+        # сдвигало бы цветокор, переходы и движения.
+        self.fx_rng = random.Random(seed_from(video_id) + 211)
+        self._fx_last = False
+
         recent_luts = list(recent_luts or [])[-3:]
         recent_openings = [OPENING_ALIASES.get(o, o)
                            for o in list(recent_openings or [])[-2:]]
@@ -470,13 +476,18 @@ class StyleEngine:
 
     # ---------- параметры одного кадра ----------
 
-    def shot_for(self, beat, pacing, beat_index: int, t: float):
+    def shot_for(self, beat, pacing, beat_index: int, t: float,
+                 same_run: int = 0, seam: bool = False):
         """
         Настройки кадра, начинающегося в секунду t внутри доли beat.
 
         Это основной путь. Старый st.clip() оставлен ниже для совместимости
         со спецификациями и тестами, но план ролика строится через этот
         метод: он единственный знает про замысел доли.
+
+        same_run/seam прокидываются в effect(): сколько кадров подряд идёт
+        однородный материал и стоит ли кадр на шве вступление->тело. Считает
+        их вызывающий — только он ведёт счёт по ходу раскладки.
         """
         want, why = pacing.want(beat_index, beat, t, spread=self.shot_spread)
         want = round(max(2.2, min(want, 24.0)), 2)
@@ -484,9 +495,12 @@ class StyleEngine:
         tr, trd = self.pick_transition()
         return dict(duration=want, move=move, speed=speed,
                     transition=tr, transition_dur=trd,
-                    effect=self.effect(), why=why, beat_kind=beat.kind)
+                    effect=self.effect(beat.kind, same_run=same_run,
+                                       seam=seam),
+                    why=why, beat_kind=beat.kind)
 
-    def clip(self, index: int, total: int, is_anchor: bool = False):
+    def clip(self, index: int, total: int, is_anchor: bool = False,
+             same_run: int = 0, seam: bool = False):
         """
         СТАРЫЙ путь: настройки кадра по позиции на таймлайне.
 
@@ -506,16 +520,76 @@ class StyleEngine:
         move, speed = self.pick_move()
         tr, trd = self.pick_transition()
         return dict(duration=dur, move=move, speed=speed, transition=tr,
-                    transition_dur=trd, effect=self.effect(),
+                    transition_dur=trd,
+                    effect=self.effect(None, same_run=same_run, seam=seam),
                     why="запасной путь: кривая по таймлайну", beat_kind=None)
 
-    def effect(self):
-        """Имя эффекта на этот кадр или None."""
+    # Множители вероятности эффекта по типу доли. Эффект — это pattern
+    # interrupt: он сбрасывает внимание. Значит, ставить его надо там, где
+    # внимание уплывает, и НЕ ставить там, где зритель и так смотрит.
+    #
+    # revelation ниже всех и это главное число здесь: развязка — то, ради
+    # чего досмотрели, и мигать поверх неё эффектом значит мешать выплате.
+    # escalation наоборот: там нужна фактура и движение.
+    BEAT_FX = {
+        "hook": 1.25,          # первые секунды: удержать любой ценой
+        "setup": 1.0,
+        "escalation": 1.40,    # нагнетание любит фактуру
+        "revelation": 0.15,    # выплата — не мешать
+        "reflection": 0.55,    # выдох
+        "cta": 1.0,
+    }
+
+    # Насколько поднимать вероятность за каждый кадр однородного ряда.
+    # Двадцать фотографий подряд читаются как слайдшоу, чем бы они ни были
+    # по факту (это же ловит rails.MAX_IMAGE_RUN = 7). Эффект такой ряд не
+    # чинит — материал всё равно нужен, — но разбивает монотонность там,
+    # где материала уже не добрать.
+    RUN_FX_STEP = 0.14
+    RUN_FX_CAP = 2.5
+
+    def effect(self, beat_kind=None, same_run: int = 0, seam: bool = False):
+        """
+        Имя эффекта на этот кадр или None.
+
+        Раньше это была чистая монета: `rng.random() >= effect_probability`,
+        одинаковая на всём ролике. Она не знала ни где находится, ни что
+        сейчас на экране — и с равной охотой ставила блик поверх развязки и
+        поверх двадцатого однообразного фото. Первое мешает, второе спасает,
+        а вероятность была одна.
+
+        Теперь вероятность зависит от контекста:
+          beat_kind  замысел доли (BEAT_FX)
+          same_run   сколько кадров подряд идёт однородный материал
+          seam       шов вступление->тело, классическое место ухода зрителя
+
+        ОТДЕЛЬНАЯ ЛЕНТА СЛУЧАЙНЫХ ЧИСЕЛ (fx_rng), а не общая self.rng — по
+        той же причине, что и у подложки: число обращений к генератору
+        теперь зависит от контекста, и на общей ленте это сдвигало бы все
+        последующие жребии. На своей ленте логику эффектов можно менять
+        дальше, не трогая ни цветокор, ни переходы, ни движения камеры.
+
+        ДВА ЭФФЕКТА ПОДРЯД НЕ СТАВЯТСЯ. Подряд они читаются не как приём, а
+        как брак кодировщика — и обесценивают сам приём: то, что стоит на
+        каждом кадре, перестаёт сбрасывать внимание.
+        """
         if not self.effects_enabled or not self.effects:
             return None
-        if self.rng.random() >= self.effect_probability:
+        if getattr(self, "_fx_last", False):
+            self._fx_last = False
             return None
-        return self.rng.choice(self.effects)
+
+        p = self.effect_probability
+        p *= self.BEAT_FX.get(beat_kind, 1.0)
+        p *= min(self.RUN_FX_CAP, 1.0 + self.RUN_FX_STEP * max(0, same_run))
+        if seam:
+            p *= 1.6
+        p = max(0.0, min(0.85, p))
+
+        if self.fx_rng.random() >= p:
+            return None
+        self._fx_last = True
+        return self.fx_rng.choice(self.effects)
 
     def framing(self, image_id: str):
         """

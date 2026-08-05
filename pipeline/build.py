@@ -30,6 +30,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from jobspec import load_job
+
 import channel
 import render
 import vet
@@ -702,7 +704,7 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
                               move=repeat_move(clip_pick.last_repeat),
                               start=round(t, 3), duration=dur,
                               transition=tr, transition_dur=trd,
-                              effect=st.effect(),
+                              effect=st.effect("hook"),
                               beat_kind="hook", why=f"вступление ({st.opening})"))
         else:
             # Во вступлении по фотографии всегда идёт скольжение или наезд,
@@ -716,7 +718,7 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
                 got, t, said=said_at(t, dur), start=round(t, 3), duration=dur,
                 move=mv, speed=sp,
                 transition=tr, transition_dur=trd,
-                effect=st.effect(),
+                effect=st.effect("hook"),
                 beat_kind="hook", why=f"вступление ({st.opening})"))
         mix.charge(got, dur)
         t += dur
@@ -751,12 +753,22 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     while i < len(marks):
         start_probe = marks[i]["start"]
         bi, beat = beat_at(start_probe)
+        # since_clip — сколько кадров-картинок подряд идёт без вставки видео.
+        # Он уже ведётся ниже для чередования материала; здесь тот же счётчик
+        # работает вторую службу: длинный однородный ряд поднимает
+        # вероятность эффекта (см. style.effect).
+        #
+        # seam — первый кадр тела, сразу за вступлением. Классическое место
+        # ухода зрителя: перебивка кончилась, начался «обычный» ролик.
+        seam = (body_idx == 0)
         if beat is not None:
-            cfg = st.shot_for(beat, pace, bi, start_probe)
+            cfg = st.shot_for(beat, pace, bi, start_probe,
+                              same_run=since_clip, seam=seam)
             is_anchor = False        # выдохи из pacing делают ту же работу
         else:
             is_anchor = idx in anchors
-            cfg = st.clip(body_idx, est_body_shots, is_anchor=is_anchor)
+            cfg = st.clip(body_idx, est_body_shots, is_anchor=is_anchor,
+                          same_run=since_clip, seam=seam)
         want = cfg["duration"]
 
         first = i
@@ -1335,7 +1347,7 @@ def ensure_overlays(st):
 # ───────────────────────── ГЛАВНОЕ ─────────────────────────
 
 def main(job_path):
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job = load_job(job_path)
     base = Path("work") / job["id"]
     assets = base / "assets"
     tmp = base / "tmp"
@@ -1416,7 +1428,7 @@ def main(job_path):
     # схлопывается в череду фотографий с одинаковым наездом независимо от
     # того, какой богатый вектор стиля ему достался.
     log("── проверка плана на признаки шаблона")
-    findings = rails.audit(shots, st.vector, getattr(st, "beats", None))
+    findings = rails.audit(shots, st.vector, getattr(st, "beats", None), job)
     metrics = rails.metrics(shots)
     hard = rails.report(findings, log)
     log(f"  разброс длительностей {metrics['cv_duration']}, "

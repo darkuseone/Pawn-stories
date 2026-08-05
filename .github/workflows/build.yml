@@ -209,9 +209,32 @@ jobs:
         if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         run: python pipeline/build.py jobs/${{ steps.pick.outputs.job }}.json
 
-      - name: Этап 3 — комплект для YouTube
+      # ОБЛОЖКИ ДО youtube.py. Порядок не случайный: covers.py делает три
+      # обложки и кладёт первую в thumbnail.jpg, а youtube.py, увидев
+      # cover_1.jpg, свой кадровый вариант уже не рисует. Поменяй шаги
+      # местами — и к человеку уедет превью попроще.
+      - name: Этап 3 — три обложки
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: python pipeline/covers.py jobs/${{ steps.pick.outputs.job }}.json
+
+      - name: Этап 4 — комплект для YouTube
         if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         run: python pipeline/youtube.py jobs/${{ steps.pick.outputs.job }}.json
+
+      # ШОРТСЫ ПОСЛЕДНИМИ, на уже готовом final.mp4. Ничего не рендерят
+      # заново: режут два куска из готового ролика, разворачивают в 9:16 и
+      # накладывают шапку с вопросом и пословные субтитры.
+      #
+      # continue-on-error: длинный ролик к этому моменту собран и лежит в
+      # релизе. Уронить весь прогон из-за того, что beats.py не нашёл
+      # годной развязки для шортса, значит потерять сорок минут рендера
+      # ради необязательного довеска.
+      - name: Этап 5 — два шортса
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
+        continue-on-error: true
+        run: python pipeline/shorts.py jobs/${{ steps.pick.outputs.job }}.json 2
 
       - name: Находим готовое
         id: out
@@ -221,18 +244,30 @@ jobs:
           DIR=work/${{ steps.pick.outputs.id }}/out
           test -f "$DIR/final.mp4" || { echo "final.mp4 не найден"; find work -type f | head -40; exit 1; }
           echo "dir=$DIR" >> $GITHUB_OUTPUT
+          echo "shorts=$(ls "$DIR"/short_*.mp4 2>/dev/null | wc -l)" >> $GITHUB_OUTPUT
+          echo "covers=$(ls "$DIR"/cover_*.jpg 2>/dev/null | wc -l)" >> $GITHUB_OUTPUT
           ls -la "$DIR"
 
-      - name: Выдаём ролик
+      # Всё, что нужно человеку, одной ссылкой: длинный ролик, два шортса,
+      # три обложки и субтитры. Шортсы и обложки помечены звёздочкой — на
+      # коротком ролике второго шортса может не быть, и это не ошибка.
+      - name: Выдаём ролик, шортсы и обложки
         if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: final-${{ steps.pick.outputs.job }}
           name: Готово — ${{ steps.pick.outputs.job }}
+          body: |
+            Длинный ролик, шортсов ${{ steps.out.outputs.shorts }}, обложек ${{ steps.out.outputs.covers }}.
+
+            `subs.srt` — субтитры для ручной заливки на YouTube после выкладки ролика.
+            `cover_1.jpg` продублирован в `thumbnail.jpg`; `cover_2/3` — запасные варианты.
           files: |
             ${{ steps.out.outputs.dir }}/final.mp4
             ${{ steps.out.outputs.dir }}/subs.srt
-          fail_on_unmatched_files: true
+            ${{ steps.out.outputs.dir }}/short_*.mp4
+            ${{ steps.out.outputs.dir }}/cover_*.jpg
+          fail_on_unmatched_files: false
 
       - name: Комплект для выкладки отдельно
         if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
@@ -242,7 +277,10 @@ jobs:
           path: |
             ${{ steps.out.outputs.dir }}/youtube.txt
             ${{ steps.out.outputs.dir }}/thumbnail.jpg
+            ${{ steps.out.outputs.dir }}/cover_*.jpg
             ${{ steps.out.outputs.dir }}/subs.srt
+            ${{ steps.out.outputs.dir }}/short_*.mp4
+            ${{ steps.out.outputs.dir }}/shorts.json
           retention-days: 30
 
       - name: Диагностика при падении
