@@ -1034,11 +1034,17 @@ def insert_chapter_cards(shots, boundaries, total, pause=CHAPTER_PAUSE):
         sh["start"] = round(sh["start"] + _shift_at(sh["start"], boundaries, pause), 3)
         out.append(sh)
     for i, (t_orig, name) in enumerate(boundaries):
+        # НЕ ставить move/speed/framing/effect даже в None: rails.metrics()
+        # читает их как s.get("speed", 1.0) — а .get() отдаёт дефолт только
+        # когда ключа НЕТ вовсе, не когда он есть и равен None. Явный
+        # speed=None здесь один раз уже уронил статистику stdev по всему
+        # ролику (TypeError на statistics.pstdev с None в списке чисел).
+        # Просто не заводить ключ — и любой .get(key) или .get(key, default)
+        # у любого потребителя отработает как для кадра без этого поля.
         out.append(dict(
             kind="card", tag="card", file=Path(f"chapter_card_{i + 1}.png"),
             start=round(t_orig + pause * i, 3), duration=pause,
             transition="fade", transition_dur=0.7,
-            effect=None, move=None, speed=None, framing=None, framing_name=None,
             beat_kind="card", why=f"пауза перед главой «{name}»", card_text=name))
     out.sort(key=lambda s: s["start"])
     for cur, nxt in zip(out, out[1:]):
