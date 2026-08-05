@@ -73,6 +73,20 @@ CLIP_MAX_SECONDS = 15.0
 # растворяется в разнообразии.
 MAX_CLIP_REPEATS = 3
 
+# Потолок повторов ОДНОЙ фотографии или картинки — архивной или
+# сгенерированной. Раньше был только у видео (MAX_CLIP_REPEATS): у ShotPicker
+# для фото и генерации совпадение слов гасло от показов (см. score()), но
+# ничего не запрещало показать удачно совпавший файл четвёртый и пятый раз
+# подряд по ролику, если конкуренции по смыслу не было. На ff-ep06 (26 мин,
+# небогатый архив по теме) один и тот же снимок вышел больше трёх раз —
+# зритель увидел это как повтор, а не как эпизод, отличный от предыдущего.
+#
+# Значение то же, что у клипов, не отдельная догадка: то же соотношение
+# «показ этого канала — это дыра в материале, а не решение монтажа».
+# Пул, исчерпанный по потолку, не блокирует показ вовсе (кадр всё равно
+# нужен), просто перестаёт быть предпочтением — см. over_cap в score().
+MAX_IMAGE_REPEATS = 3
+
 # Ходы камеры для ПОВТОРНЫХ показов клипа, см. render.FOOTAGE_MOVES. Первый
 # показ идёт как снят, второй и третий — с медленным наездом или уводом.
 # ClipCutter к этому моменту уже отдаёт другой КУСОК файла, так что вместе
@@ -194,7 +208,7 @@ class ShotPicker:
     # а материала на канале конечное количество.
     PRIOR_WEIGHT = 0.5
 
-    def __init__(self, pool, total: float, prior=None):
+    def __init__(self, pool, total: float, prior=None, cap: int = None):
         # pool: [(path, tag, keywords), ...]
         self.pool = pool
         self.total = max(total, 0.001)
@@ -205,6 +219,13 @@ class ShotPicker:
         # сколько раз выданный файл показывали ДО этого раза: 0 — первый
         # показ. По нему монтаж решает, вешать ли на клип ход камеры.
         self.last_repeat = 0
+        # Потолок повторов ОДНОГО файла В ЭТОМ РОЛИКЕ. None — без потолка,
+        # для обратной совместимости с местами, где ShotPicker используется
+        # не для показа зрителю (если такие появятся). cap проверяется по
+        # СЫРОМУ счётчику показов в этом видео, не по used из score() —
+        # тот блендит с памятью канала (prior), а потолок должен ловить
+        # именно повтор внутри одного ролика, который и увидел зритель.
+        self.cap = cap
 
         # ПАМЯТЬ МЕЖДУ РОЛИКАМИ. Износ внутри ролика (см. score) спасает от
         # шести показов одной вазы в одном ролике, но ничего не знает про
@@ -248,9 +269,21 @@ class ShotPicker:
             # права на бесконечный повтор.
             overlap = len(want & kw) - used
             same = 1 if path == self.last else 0
-            # порядок важен: сначала не повторяться, потом смысл (с учётом
-            # износа), потом реже показанное, потом ближе по таймлайну
-            return (same, -overlap, used, abs(j - k), j)
+            # ПОТОЛОК ПОВТОРОВ — ПЕРВЫЙ КЛЮЧ, ВЫШЕ ВСЕГО ОСТАЛЬНОГО. Раньше
+            # его не было вовсе для картинок (только у стокового видео, см.
+            # MAX_CLIP_REPEATS), и файл с удачным семантическим совпадением
+            # выигрывал подбор в каждом кадре подряд весь ролик — на
+            # ff-ep06 архивное фото показалось больше трёх раз за 26 минут.
+            # over_cap стоит ПЕРЕД same: пока в пуле есть хоть один файл
+            # младше потолка, он побеждает даже тот же кадр, что был только
+            # что — иначе на исчерпанном пуле (все выше потолка) кадр
+            # застрял бы, гоняя один и тот же файл через один.
+            raw = self.used.get(j, 0)
+            over_cap = 1 if (self.cap is not None and raw >= self.cap) else 0
+            # порядок важен: сначала потолок, потом не повторяться, потом
+            # смысл (с учётом износа), потом реже показанное, потом ближе
+            # по таймлайну
+            return (over_cap, same, -overlap, used, abs(j - k), j)
 
         best = min(range(n), key=score)
         if len(want & self.pool[best][2]):
@@ -560,8 +593,10 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     if prior:
         log(f"  память канала: {len(prior)} файлов уже шли в эфир")
 
-    gen_pick = ShotPicker([(p, "gen", kw_of(p)) for p in images], total, prior)
-    arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total, prior)
+    gen_pick = ShotPicker([(p, "gen", kw_of(p)) for p in images], total, prior,
+                         cap=MAX_IMAGE_REPEATS)
+    arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total, prior,
+                          cap=MAX_IMAGE_REPEATS)
     clip_pick = ShotPicker([(p, "clip", kw_of(p)) for p in clips], total, prior)
 
     # ── РАЗБОР СЦЕНАРИЯ НА ДОЛИ ──────────────────────────────────────
@@ -603,6 +638,38 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
             clip_cap_hit[0] = True
             log(f"  сток: весь пул ({len(clips)}) показан по {MAX_CLIP_REPEATS} "
                 f"раз — дальше слоты видео уходят фото и генерации")
+        return False
+
+    gen_cap_hit, arch_cap_hit = [False], [False]
+
+    def gen_available():
+        """Ложь, когда ВСЯ генерация показана по MAX_IMAGE_REPEATS раз.
+
+        Пул картинок и архива исчерпывается редко (их обычно на порядок
+        больше, чем стока), но на бедном по теме ролике — как раз тот
+        случай, что и привёл к правке. Слот в этом случае не пропадает:
+        MaterialMix.pick() уходит в оставшийся разрешённый вид, а если и
+        тот исчерпан — score() внутри ShotPicker всё равно вернёт
+        файл, просто не отдавая ему предпочтения (см. over_cap).
+        """
+        if not gen_pick or not gen_pick.exhausted(MAX_IMAGE_REPEATS):
+            return True
+        if not gen_cap_hit[0]:
+            gen_cap_hit[0] = True
+            log(f"  генерация: весь пул ({len(images)}) показан по "
+                f"{MAX_IMAGE_REPEATS} раз — добери stage: assets или подними "
+                f"generated_share")
+        return False
+
+    def arch_available():
+        """Ложь, когда весь архив показан по MAX_IMAGE_REPEATS раз."""
+        if not arch_pick or not arch_pick.exhausted(MAX_IMAGE_REPEATS):
+            return True
+        if not arch_cap_hit[0]:
+            arch_cap_hit[0] = True
+            log(f"  архив: весь пул ({len(archive)}) показан по "
+                f"{MAX_IMAGE_REPEATS} раз — добери stage: material по "
+                f"archive_queries")
         return False
 
     mix = MaterialMix(st.generated_share, bool(images), bool(archive),
@@ -695,7 +762,10 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         # Слот выбран (видео или фото), но чем именно его закрыть — решает
         # пропорция. Во вступлении она работает так же, как в теле: иначе
         # первые три минуты, самые смотримые, съезжали бы в генерацию.
-        got = mix.pick(["clip"] if kind == "clip" else ["gen", "arch"])
+        allowed = (["clip"] if kind == "clip" else
+                  (["gen"] if gen_available() else []) +
+                  (["arch"] if arch_available() else []))
+        got = mix.pick(allowed)
 
         if got == "clip":
             src, _ = clip_pick.take(t, said_at(t, dur))
@@ -825,7 +895,9 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         clip_ok = (not is_anchor and since_clip >= next_gap
                    and beat_wants_clip
                    and dur <= CLIP_MAX_SECONDS and clip_available())
-        got = mix.pick((["clip"] if clip_ok else []) + ["gen", "arch"])
+        got = mix.pick((["clip"] if clip_ok else []) +
+                      (["gen"] if gen_available() else []) +
+                      (["arch"] if arch_available() else []))
 
         said = " ".join(m["text"] for m in marks[first:best + 1])
         meta = dict(why=cfg.get("why", ""), beat_kind=cfg.get("beat_kind"))
