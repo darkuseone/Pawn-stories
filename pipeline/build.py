@@ -23,6 +23,7 @@ build.py — собирает ролик из готовых материало�
 import json
 import math
 import os
+import shlex
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -72,6 +73,28 @@ CLIP_MAX_SECONDS = 15.0
 # уходит фотографии или генерации: обеих в разы больше, повтор там
 # растворяется в разнообразии.
 MAX_CLIP_REPEATS = 3
+
+# Потолок повторов ОДНОЙ фотографии или картинки — архивной или
+# сгенерированной. Раньше был только у видео (MAX_CLIP_REPEATS): у ShotPicker
+# для фото и генерации совпадение слов гасло от показов (см. score()), но
+# ничего не запрещало показать удачно совпавший файл четвёртый и пятый раз
+# подряд по ролику, если конкуренции по смыслу не было. На ff-ep06 (26 мин,
+# небогатый архив по теме) один и тот же снимок вышел больше трёх раз —
+# зритель увидел это как повтор, а не как эпизод, отличный от предыдущего.
+#
+# Значение то же, что у клипов, не отдельная догадка: то же соотношение
+# «показ этого канала — это дыра в материале, а не решение монтажа».
+# Пул, исчерпанный по потолку, не блокирует показ вовсе (кадр всё равно
+# нужен), просто перестаёт быть предпочтением — см. over_cap в score().
+MAX_IMAGE_REPEATS = 3
+
+# Пауза перед каждой новой историей: чёрная карточка с названием главы,
+# и голос по-настоящему замолкает на это время — не наплыв поверх звука,
+# а тишина, иначе «пауза» это вопрос к монтажёру, а не к диктору. 2.6 —
+# середина заказанных «2-3 секунды»: короче читается как техническая
+# заминка, длиннее держит зрителя в неизвестности дольше, чем нужно для
+# смены темы.
+CHAPTER_PAUSE = 2.6
 
 # Ходы камеры для ПОВТОРНЫХ показов клипа, см. render.FOOTAGE_MOVES. Первый
 # показ идёт как снят, второй и третий — с медленным наездом или уводом.
@@ -194,7 +217,7 @@ class ShotPicker:
     # а материала на канале конечное количество.
     PRIOR_WEIGHT = 0.5
 
-    def __init__(self, pool, total: float, prior=None):
+    def __init__(self, pool, total: float, prior=None, cap: int = None):
         # pool: [(path, tag, keywords), ...]
         self.pool = pool
         self.total = max(total, 0.001)
@@ -205,6 +228,13 @@ class ShotPicker:
         # сколько раз выданный файл показывали ДО этого раза: 0 — первый
         # показ. По нему монтаж решает, вешать ли на клип ход камеры.
         self.last_repeat = 0
+        # Потолок повторов ОДНОГО файла В ЭТОМ РОЛИКЕ. None — без потолка,
+        # для обратной совместимости с местами, где ShotPicker используется
+        # не для показа зрителю (если такие появятся). cap проверяется по
+        # СЫРОМУ счётчику показов в этом видео, не по used из score() —
+        # тот блендит с памятью канала (prior), а потолок должен ловить
+        # именно повтор внутри одного ролика, который и увидел зритель.
+        self.cap = cap
 
         # ПАМЯТЬ МЕЖДУ РОЛИКАМИ. Износ внутри ролика (см. score) спасает от
         # шести показов одной вазы в одном ролике, но ничего не знает про
@@ -248,9 +278,21 @@ class ShotPicker:
             # права на бесконечный повтор.
             overlap = len(want & kw) - used
             same = 1 if path == self.last else 0
-            # порядок важен: сначала не повторяться, потом смысл (с учётом
-            # износа), потом реже показанное, потом ближе по таймлайну
-            return (same, -overlap, used, abs(j - k), j)
+            # ПОТОЛОК ПОВТОРОВ — ПЕРВЫЙ КЛЮЧ, ВЫШЕ ВСЕГО ОСТАЛЬНОГО. Раньше
+            # его не было вовсе для картинок (только у стокового видео, см.
+            # MAX_CLIP_REPEATS), и файл с удачным семантическим совпадением
+            # выигрывал подбор в каждом кадре подряд весь ролик — на
+            # ff-ep06 архивное фото показалось больше трёх раз за 26 минут.
+            # over_cap стоит ПЕРЕД same: пока в пуле есть хоть один файл
+            # младше потолка, он побеждает даже тот же кадр, что был только
+            # что — иначе на исчерпанном пуле (все выше потолка) кадр
+            # застрял бы, гоняя один и тот же файл через один.
+            raw = self.used.get(j, 0)
+            over_cap = 1 if (self.cap is not None and raw >= self.cap) else 0
+            # порядок важен: сначала потолок, потом не повторяться, потом
+            # смысл (с учётом износа), потом реже показанное, потом ближе
+            # по таймлайну
+            return (over_cap, same, -overlap, used, abs(j - k), j)
 
         best = min(range(n), key=score)
         if len(want & self.pool[best][2]):
@@ -560,8 +602,10 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     if prior:
         log(f"  память канала: {len(prior)} файлов уже шли в эфир")
 
-    gen_pick = ShotPicker([(p, "gen", kw_of(p)) for p in images], total, prior)
-    arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total, prior)
+    gen_pick = ShotPicker([(p, "gen", kw_of(p)) for p in images], total, prior,
+                         cap=MAX_IMAGE_REPEATS)
+    arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total, prior,
+                          cap=MAX_IMAGE_REPEATS)
     clip_pick = ShotPicker([(p, "clip", kw_of(p)) for p in clips], total, prior)
 
     # ── РАЗБОР СЦЕНАРИЯ НА ДОЛИ ──────────────────────────────────────
@@ -603,6 +647,38 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
             clip_cap_hit[0] = True
             log(f"  сток: весь пул ({len(clips)}) показан по {MAX_CLIP_REPEATS} "
                 f"раз — дальше слоты видео уходят фото и генерации")
+        return False
+
+    gen_cap_hit, arch_cap_hit = [False], [False]
+
+    def gen_available():
+        """Ложь, когда ВСЯ генерация показана по MAX_IMAGE_REPEATS раз.
+
+        Пул картинок и архива исчерпывается редко (их обычно на порядок
+        больше, чем стока), но на бедном по теме ролике — как раз тот
+        случай, что и привёл к правке. Слот в этом случае не пропадает:
+        MaterialMix.pick() уходит в оставшийся разрешённый вид, а если и
+        тот исчерпан — score() внутри ShotPicker всё равно вернёт
+        файл, просто не отдавая ему предпочтения (см. over_cap).
+        """
+        if not gen_pick or not gen_pick.exhausted(MAX_IMAGE_REPEATS):
+            return True
+        if not gen_cap_hit[0]:
+            gen_cap_hit[0] = True
+            log(f"  генерация: весь пул ({len(images)}) показан по "
+                f"{MAX_IMAGE_REPEATS} раз — добери stage: assets или подними "
+                f"generated_share")
+        return False
+
+    def arch_available():
+        """Ложь, когда весь архив показан по MAX_IMAGE_REPEATS раз."""
+        if not arch_pick or not arch_pick.exhausted(MAX_IMAGE_REPEATS):
+            return True
+        if not arch_cap_hit[0]:
+            arch_cap_hit[0] = True
+            log(f"  архив: весь пул ({len(archive)}) показан по "
+                f"{MAX_IMAGE_REPEATS} раз — добери stage: material по "
+                f"archive_queries")
         return False
 
     mix = MaterialMix(st.generated_share, bool(images), bool(archive),
@@ -695,7 +771,10 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         # Слот выбран (видео или фото), но чем именно его закрыть — решает
         # пропорция. Во вступлении она работает так же, как в теле: иначе
         # первые три минуты, самые смотримые, съезжали бы в генерацию.
-        got = mix.pick(["clip"] if kind == "clip" else ["gen", "arch"])
+        allowed = (["clip"] if kind == "clip" else
+                  (["gen"] if gen_available() else []) +
+                  (["arch"] if arch_available() else []))
+        got = mix.pick(allowed)
 
         if got == "clip":
             src, _ = clip_pick.take(t, said_at(t, dur))
@@ -825,7 +904,9 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         clip_ok = (not is_anchor and since_clip >= next_gap
                    and beat_wants_clip
                    and dur <= CLIP_MAX_SECONDS and clip_available())
-        got = mix.pick((["clip"] if clip_ok else []) + ["gen", "arch"])
+        got = mix.pick((["clip"] if clip_ok else []) +
+                      (["gen"] if gen_available() else []) +
+                      (["arch"] if arch_available() else []))
 
         said = " ".join(m["text"] for m in marks[first:best + 1])
         meta = dict(why=cfg.get("why", ""), beat_kind=cfg.get("beat_kind"))
@@ -894,6 +975,142 @@ def material_report(shots):
         cnt[tag] = cnt.get(tag, 0) + 1
     total = sum(sec.values()) or 1.0
     return sec, cnt, total
+
+
+# ───────────────────────── ПАУЗЫ ПЕРЕД ГЛАВАМИ ─────────────────────────
+#
+# Работают ПОСЛЕ plan_shots(), не внутри неё: список кадров уже расставлен
+# по смыслу (beats/pacing/variation), карточка — чисто технический сдвиг
+# готового плана, а не редакторское решение. Так правка не задевает ни
+# один из модулей pipeline/editorial — они по-прежнему видят и разбирают
+# ИСХОДНЫЙ, беспаузный сценарий, ровно как до этой правки.
+
+def chapter_boundaries(job, beats, total):
+    """
+    Момент начала каждой НОВОЙ истории (кроме самой первой) и её название.
+
+    Названия берутся из youtube.chapters — той же карты, что уже пишет
+    описание ролика на YouTube (см. youtube.chapters()). Второй источник
+    времени заводить не пришлось: beats.py уже знает, какой доле какой
+    script_blocks она принадлежит (Beat.block), а первая доля нового
+    block и есть момент, откуда начинается следующая история.
+    """
+    names = (job.get("youtube") or {}).get("chapters") or []
+    blocks = job.get("script_blocks") or []
+    if not names or len(names) != len(blocks) or not beats:
+        return []
+    first_start = {}
+    for b in beats:
+        if b.block not in first_start or b.start < first_start[b.block]:
+            first_start[b.block] = b.start
+    out = [(first_start[i], names[i]) for i in range(1, len(blocks))
+           if i in first_start]
+    return sorted(out)
+
+
+def _shift_at(t: float, boundaries, pause: float) -> float:
+    """Сколько секунд паузы уже накопилось ДО момента t (t включительно)."""
+    return pause * sum(1 for bt, _ in boundaries if bt <= t)
+
+
+def insert_chapter_cards(shots, boundaries, total, pause=CHAPTER_PAUSE):
+    """
+    Вставляет кадр-карточку на каждой границе и раздвигает таймлайн.
+
+    Сдвиг НЕ последовательный (сдвинуть, потом сдвинуть ещё), а посчитан
+    для каждого кадра сразу по его ИСХОДНОМУ времени — иначе кадр у самой
+    границы дважды попадает под сдвиг соседней и уезжает не на ту сумму.
+
+    Длительности после вставки считаются ТЕМ ЖЕ способом, что и в конце
+    plan_shots (до старта следующего кадра): другой способ здесь завёл бы
+    рассинхрон между этой функцией и той, а они обязаны давать одно и то
+    же на кадрах, которых сдвиг не коснулся.
+    """
+    if not boundaries:
+        return shots, total
+    out = []
+    for sh in shots:
+        sh = dict(sh)
+        sh["start"] = round(sh["start"] + _shift_at(sh["start"], boundaries, pause), 3)
+        out.append(sh)
+    for i, (t_orig, name) in enumerate(boundaries):
+        # НЕ ставить move/speed/framing/effect даже в None: rails.metrics()
+        # читает их как s.get("speed", 1.0) — а .get() отдаёт дефолт только
+        # когда ключа НЕТ вовсе, не когда он есть и равен None. Явный
+        # speed=None здесь один раз уже уронил статистику stdev по всему
+        # ролику (TypeError на statistics.pstdev с None в списке чисел).
+        # Просто не заводить ключ — и любой .get(key) или .get(key, default)
+        # у любого потребителя отработает как для кадра без этого поля.
+        out.append(dict(
+            kind="card", tag="card", file=Path(f"chapter_card_{i + 1}.png"),
+            start=round(t_orig + pause * i, 3), duration=pause,
+            transition="fade", transition_dur=0.7,
+            beat_kind="card", why=f"пауза перед главой «{name}»", card_text=name))
+    out.sort(key=lambda s: s["start"])
+    for cur, nxt in zip(out, out[1:]):
+        cur["duration"] = round(nxt["start"] - cur["start"], 3)
+    new_total = round(total + pause * len(boundaries), 3)
+    if out:
+        out[-1]["duration"] = round(max(new_total - out[-1]["start"], 0.1), 3)
+    return out, new_total
+
+
+def shift_marks(marks, boundaries, pause=CHAPTER_PAUSE):
+    """Тайм-коды слов на новую, раздвинутую пауза́ми шкалу времени.
+
+    Нужна субтитрам (render.write_srt) и marks_final.json для шортсов —
+    оба читают финальный ролик, а в нём пауза уже настоящая тишина, и
+    без сдвига любое слово после первой же паузы поехало бы вперёд звука
+    на её длину, а после второй — на сумму двух, и так далее.
+    """
+    if not boundaries:
+        return marks
+    out = []
+    for m in marks:
+        m = dict(m)
+        m["start"] = round(m["start"] + _shift_at(m["start"], boundaries, pause), 3)
+        m["end"] = round(m["end"] + _shift_at(m["end"], boundaries, pause), 3)
+        out.append(m)
+    return out
+
+
+def voice_with_pauses(voice: Path, boundaries, pause: float, tmp: Path) -> Path:
+    """
+    Копия начитки с настоящей тишиной на границах глав.
+
+    Кэш (assets/voice_full.m4a) не трогается — режется КОПИЯ во временной
+    папке. Тишина — отдельный файл anullsrc, куски голоса вырезаются
+    -ss/-t с перекодированием (не stream copy): точность реза важнее
+    скорости, а на получасовой начитке перекодировать пять-шесть кусков
+    и один синус тишины — секунды, не минуты.
+    """
+    silence = tmp / "_chapter_silence.m4a"
+    if not silence.exists():
+        subprocess.run(
+            f"ffmpeg -y -f lavfi -i anullsrc=r=48000:cl=stereo -t {pause:.3f} "
+            f"-c:a aac -b:a 192k {shlex.quote(str(silence))}",
+            shell=True, check=True, capture_output=True)
+    pieces, prev_t = [], 0.0
+    for k, (t_orig, _name) in enumerate(boundaries):
+        seg = tmp / f"_voice_seg_{k:02d}.m4a"
+        if not seg.exists():
+            subprocess.run(
+                f"ffmpeg -y -ss {prev_t:.3f} -i {shlex.quote(str(voice))} "
+                f"-t {t_orig - prev_t:.3f} -c:a aac -b:a 192k "
+                f"{shlex.quote(str(seg))}",
+                shell=True, check=True, capture_output=True)
+        pieces += [seg, silence]
+        prev_t = t_orig
+    tail = tmp / "_voice_tail.m4a"
+    if not tail.exists():
+        subprocess.run(
+            f"ffmpeg -y -ss {prev_t:.3f} -i {shlex.quote(str(voice))} "
+            f"-c:a aac -b:a 192k {shlex.quote(str(tail))}",
+            shell=True, check=True, capture_output=True)
+    pieces.append(tail)
+    out = tmp / "voice_paused.m4a"
+    render.concat_segments(pieces, out)
+    return out
 
 
 # ───────────────────────── НАСТРОЙКИ ИЗ JSON ─────────────────────────
@@ -1102,7 +1319,9 @@ def render_one(args):
     out = tmp / f"clip_{n:04d}.mp4"
     if out.exists():
         return out
-    if sh["kind"] == "clip":
+    if sh["kind"] == "card":
+        render.render_card(sh["card_text"], out, sh["render_dur"])
+    elif sh["kind"] == "clip":
         render.render_footage_clip(Path(sh["file"]), out, sh["render_dur"],
                                    start=sh.get("src_start", 0.0),
                                    effect=sh.get("effect"),
@@ -1401,6 +1620,17 @@ def main(job_path):
 
     log("── план кадров")
     shots = plan_shots(marks, st, assets, total, job.get("reject"), job)
+
+    # Паузы перед главами — ПОСЛЕ плана, а не внутри него: раскладка по
+    # смыслу (beats/pacing/variation) уже принята, дальше только техника.
+    boundaries = chapter_boundaries(job, getattr(st, "beats", []), total)
+    if boundaries:
+        shots, total = insert_chapter_cards(shots, boundaries, total)
+        log(f"── паузы перед главами: {len(boundaries)} шт., "
+            f"по {CHAPTER_PAUSE:.1f} с")
+        for t, name in boundaries:
+            log(f"  {t/60:5.1f} мин  «{name}»")
+
     set_render_durations(shots)
     log(f"  {len(shots)} кадров на {total/60:.1f} мин, "
         f"средний {total/len(shots):.1f} сек")
@@ -1413,6 +1643,9 @@ def main(job_path):
     for k in ("gen", "arch", "clip"):
         log(f"  {names[k]:<14} {sec[k]/mtotal*100:5.1f}%  "
             f"{sec[k]/60:6.1f} мин  {cnt[k]:4d} кадров")
+    if cnt.get("card"):
+        log(f"  {'паузы глав':<14} {sec['card']/mtotal*100:5.1f}%  "
+            f"{sec['card']/60:6.1f} мин  {cnt['card']:4d} кадров")
     want = st.generated_share
     if abs(sec["gen"] / mtotal - want) > 0.05:
         log(f"  ! генерации {sec['gen']/mtotal*100:.1f}% при заказанных "
@@ -1444,6 +1677,14 @@ def main(job_path):
     # нет ни в одном исходном материале.
     moments = textcard.moments(getattr(st, "beats", []), marks, st.vector,
                                st.rng)
+    # Разбор чисел идёт по ИСХОДНОМУ сценарию (см. заголовок раздела «паузы
+    # перед главами» выше), а плашка ложится на РАЗДВИНУТЫЙ таймлайн — иначе
+    # text_for_group() сверяет её время со сдвинутыми группами кадров и не
+    # находит совпадения ни разу после первой же паузы, то есть все плашки
+    # после первой главы молча пропадают.
+    if boundaries:
+        for m in moments:
+            m["t"] = round(m["t"] + _shift_at(m["t"], boundaries, CHAPTER_PAUSE), 3)
     if moments:
         log(f"── плашки: {len(moments)} шт., стиль {st.text_style}")
         for m in moments:
@@ -1529,17 +1770,35 @@ def main(job_path):
     elif not style_mod.music_pool():
         log("  ! подложек нет в assets/music — собираю только с голосом")
     ducks = duck_points(st, getattr(st, "beats", []), getattr(st, "pacing", None))
+    if boundaries:
+        # Те же ямы подложки, но на раздвинутой шкале — см. «плашки» выше:
+        # без сдвига яма после первой паузы приходится не под ту фразу.
+        ducks = [(round(t + _shift_at(t, boundaries, CHAPTER_PAUSE), 3), d)
+                 for t, d in ducks]
     if ducks and bed:
         log(f"  подложка уходит в {len(ducks)} местах "
             f"({st.duck_style}, глубина {st.duck_depth})")
-    render.build_audio(assets / "voice_full.m4a", bed, mixed, total,
+    voice = assets / "voice_full.m4a"
+    if boundaries:
+        log(f"── врезаю тишину в начитку: {len(boundaries)} пауз по "
+            f"{CHAPTER_PAUSE:.1f} с")
+        voice = voice_with_pauses(voice, boundaries, CHAPTER_PAUSE, tmp)
+    render.build_audio(voice, bed, mixed, total,
                        bed_gain_db=job.get("bed_gain_db", -26.0),
                        duck_points=ducks, duck_depth=st.duck_depth)
 
     log("── финал")
     final = out / "final.mp4"
     render.mux(silent, mixed, final)
-    render.write_srt(marks, out / "subs.srt")
+    # marks_final.json — тайм-коды на шкале ГОТОВОГО final.mp4 (с паузами,
+    # если они есть). subs.srt пишется из них же, а не из сырых marks:
+    # иначе субтитры после первой паузы обгоняли бы звук на её длину.
+    # shorts.py режет куски из final.mp4 и читает этот файл, если он есть,
+    # вместо assets/marks.json — тот остаётся кэшем на исходной шкале.
+    final_marks = shift_marks(marks, boundaries, CHAPTER_PAUSE) if boundaries else marks
+    render.write_srt(final_marks, out / "subs.srt")
+    (out / "marks_final.json").write_text(
+        json.dumps(final_marks, ensure_ascii=False), encoding="utf-8")
 
     # ПРОВЕРКА ЗАМЕРОМ, а не на глаз. Расхождение видео и звука — симптом
     # перекрытия переходов: код возврата ноль, лог чистый, а конец начитки

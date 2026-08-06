@@ -8,7 +8,7 @@ on:
         required: true
         default: 'auction-01'
       stage:
-        description: 'material / vet / assets / render / auto'
+        description: 'material / vet / assets / render / post / auto'
         required: true
         default: 'auto'
 
@@ -81,6 +81,10 @@ jobs:
             material) need="" ; want="PEXELS_API_KEY PIXABAY_API_KEY MAGNIFIC_API_KEY" ;;
             vet)      need="" ; want="XAI_API_KEY" ;;
             render)   need="" ; want="" ;;
+            # post: только обложки, youtube-комплект и шортсы поверх УЖЕ
+            # готового final.mp4 из релиза — ни озвучки, ни генерации
+            # картинок здесь не запускается, ключ нужен только covers.py.
+            post)     need="" ; want="XAI_API_KEY" ;;
             *)        need="XAI_API_KEY ELEVENLABS_API_KEY PEXELS_API_KEY PIXABAY_API_KEY" ; want="ELEVENLABS_VOICE_ID MAGNIFIC_API_KEY" ;;
           esac
           for k in $want; do
@@ -123,6 +127,31 @@ jobs:
           key: assets-${{ steps.pick.outputs.id }}-v1-${{ github.run_id }}
           restore-keys: |
             assets-${{ steps.pick.outputs.id }}-v1-
+
+      # Стадия post: обложки/youtube/шортсы переделываются без пересборки
+      # монтажа. Монтаж (build.py) не бесплатный по времени (70-90 минут
+      # ffmpeg на получасовом ролике) и на КАЖДУЮ мелкую правку упаковки
+      # запускать его заново незачем — картинка от этого не меняется.
+      # final.mp4 и subs.srt берутся уже готовыми из релиза final-<job>,
+      # который выложил предыдущий полный прогон (стадия auto/render).
+      # marks.json шортсам всё равно нужен — он приходит из кэша материалов
+      # (шаг «Достаём материалы из кэша» выше, работает на любой стадии).
+      - name: Стадия post — готовый final.mp4 из релиза, без пересборки
+        if: steps.pick.outputs.stage == 'post'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          DIR=work/${{ steps.pick.outputs.id }}/out
+          mkdir -p "$DIR"
+          gh release download "final-${{ steps.pick.outputs.job }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "final.mp4" --pattern "subs.srt" \
+            --dir "$DIR" --clobber
+          test -f "$DIR/final.mp4" || {
+            echo "нет final.mp4 в релизе final-${{ steps.pick.outputs.job }} — сначала нужен полный прогон (stage: auto)"
+            exit 1
+          }
 
       - name: Только отбраковка — без скачивания
         if: steps.pick.outputs.stage == 'vet'
@@ -184,7 +213,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Этап 1 — озвучка, изображения, материал
-        if: steps.pick.outputs.stage != 'render' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
+        if: steps.pick.outputs.stage != 'render' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet' && steps.pick.outputs.stage != 'post'
         env:
           XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
@@ -197,23 +226,24 @@ jobs:
           MAGNIFIC_API_KEY:   ${{ secrets.MAGNIFIC_API_KEY }}
         run: python pipeline/assets.py jobs/${{ steps.pick.outputs.job }}.json
 
-      # Только если что-то качали. На чистом перерендере папка не менялась.
+      # Только если что-то качали. На чистом перерендере и на post папка не
+      # менялась — сохранять кэш заново нечем и незачем.
       - name: Кладём материалы в кэш
-        if: steps.pick.outputs.stage != 'render'
+        if: steps.pick.outputs.stage != 'render' && steps.pick.outputs.stage != 'post'
         uses: actions/cache/save@v4
         with:
           path: work/${{ steps.pick.outputs.id }}/assets
           key: assets-${{ steps.pick.outputs.id }}-v1-${{ github.run_id }}
 
       - name: Этап 2 — монтаж
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
+        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet' && steps.pick.outputs.stage != 'post'
         run: python pipeline/build.py jobs/${{ steps.pick.outputs.job }}.json
 
       # ОБЛОЖКИ ДО youtube.py. Порядок не случайный: covers.py делает три
       # обложки и кладёт первую в thumbnail.jpg, а youtube.py, увидев
       # cover_1.jpg, свой кадровый вариант уже не рисует. Поменяй шаги
       # местами — и к человеку уедет превью попроще.
-      - name: Этап 3 — три обложки
+      - name: Этап 3 — две обложки
         if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         env:
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
@@ -249,8 +279,8 @@ jobs:
           ls -la "$DIR"
 
       # Всё, что нужно человеку, одной ссылкой: длинный ролик, два шортса,
-      # три обложки и субтитры. Шортсы и обложки помечены звёздочкой — на
-      # коротком ролике второго шортса может не быть, и это не ошибка.
+      # две обложки и субтитры. Шортсы помечены звёздочкой — на коротком
+      # ролике второго шортса может не быть, и это не ошибка.
       - name: Выдаём ролик, шортсы и обложки
         if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
         uses: softprops/action-gh-release@v2
@@ -261,7 +291,7 @@ jobs:
             Длинный ролик, шортсов ${{ steps.out.outputs.shorts }}, обложек ${{ steps.out.outputs.covers }}.
 
             `subs.srt` — субтитры для ручной заливки на YouTube после выкладки ролика.
-            `cover_1.jpg` продублирован в `thumbnail.jpg`; `cover_2/3` — запасные варианты.
+            `cover_1.jpg` продублирован в `thumbnail.jpg`; `cover_2.jpg` — запасной вариант.
           files: |
             ${{ steps.out.outputs.dir }}/final.mp4
             ${{ steps.out.outputs.dir }}/subs.srt
