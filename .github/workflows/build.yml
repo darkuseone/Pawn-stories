@@ -8,7 +8,7 @@ on:
         required: true
         default: 'auction-01'
       stage:
-        description: 'material / vet / assets / render / post / auto'
+        description: 'material / vet / assets / render / post / shorts / auto'
         required: true
         default: 'auto'
 
@@ -54,7 +54,34 @@ jobs:
           echo "job=$JOB"     >> $GITHUB_OUTPUT
           echo "stage=$STAGE" >> $GITHUB_OUTPUT
           echo "id=$ID"       >> $GITHUB_OUTPUT
+
+          # ЧТО ДЕЛАЕМ НА ЭТОЙ СТАДИИ — считается ОДИН раз и здесь.
+          # Раньше каждый шаг нёс цепочку вида «!= assets && != material &&
+          # != vet && != post», и добавление новой стадии означало вписать
+          # её в пять мест, ничего не забыв. Флаг на шаг читается сразу и
+          # ошибиться в нём негде.
+          #
+          #   assets  — озвучка, генерация картинок, скачивание материала
+          #   build   — монтаж ffmpeg (самое долгое: 70-90 минут)
+          #   pack    — обложки и комплект для YouTube
+          #   shorts  — вертикальные шортсы из готового final.mp4
+          #   fromrel — final.mp4 берём из релиза, а не собираем
+          A=false; B=false; P=false; S=false; R=false
+          case "$STAGE" in
+            material|vet) ;;
+            assets)  A=true ;;
+            render)  B=true; P=true; S=true ;;
+            post)    P=true; S=true; R=true ;;
+            shorts)  S=true; R=true ;;
+            *)       A=true; B=true; P=true; S=true ;;
+          esac
+          echo "do_assets=$A"  >> $GITHUB_OUTPUT
+          echo "do_build=$B"   >> $GITHUB_OUTPUT
+          echo "do_pack=$P"    >> $GITHUB_OUTPUT
+          echo "do_shorts=$S"  >> $GITHUB_OUTPUT
+          echo "from_release=$R" >> $GITHUB_OUTPUT
           echo "Собираю: $JOB (папка work/$ID), этап: $STAGE"
+          echo "  материал=$A монтаж=$B упаковка=$P шортсы=$S из-релиза=$R"
 
       - name: Проверка секретов
         env:
@@ -85,6 +112,9 @@ jobs:
             # готового final.mp4 из релиза — ни озвучки, ни генерации
             # картинок здесь не запускается, ключ нужен только covers.py.
             post)     need="" ; want="XAI_API_KEY" ;;
+            # shorts: только нарезка из готового final.mp4, ключи не нужны
+            # вовсе — ни генерации, ни озвучки, ни обложек здесь нет.
+            shorts)   need="" ; want="" ;;
             *)        need="XAI_API_KEY ELEVENLABS_API_KEY PEXELS_API_KEY PIXABAY_API_KEY" ; want="ELEVENLABS_VOICE_ID MAGNIFIC_API_KEY" ;;
           esac
           for k in $want; do
@@ -128,16 +158,23 @@ jobs:
           restore-keys: |
             assets-${{ steps.pick.outputs.id }}-v1-
 
-      # Стадия post: обложки/youtube/шортсы переделываются без пересборки
-      # монтажа. Монтаж (build.py) не бесплатный по времени (70-90 минут
-      # ffmpeg на получасовом ролике) и на КАЖДУЮ мелкую правку упаковки
-      # запускать его заново незачем — картинка от этого не меняется.
-      # final.mp4 и subs.srt берутся уже готовыми из релиза final-<job>,
-      # который выложил предыдущий полный прогон (стадия auto/render).
-      # marks.json шортсам всё равно нужен — он приходит из кэша материалов
-      # (шаг «Достаём материалы из кэша» выше, работает на любой стадии).
-      - name: Стадия post — готовый final.mp4 из релиза, без пересборки
-        if: steps.pick.outputs.stage == 'post'
+      # Стадии post и shorts: упаковка переделывается без пересборки монтажа.
+      # Монтаж (build.py) не бесплатный по времени (70-90 минут ffmpeg на
+      # получасовом ролике) и на КАЖДУЮ мелкую правку запускать его заново
+      # незачем — картинка от этого не меняется. final.mp4 берётся готовым
+      # из релиза final-<job>, который выложил предыдущий полный прогон.
+      #
+      # marks_final.json — тайм-коды на шкале ГОТОВОГО ролика (с паузами
+      # глав). Он лежит в релизе с этой правки; для релизов, выложенных
+      # раньше, shorts.py пересчитает сдвиг сам (см. load_final_marks).
+      # Поэтому --pattern на него не обязателен и прогон не роняет.
+      #
+      # Разница стадий: post переделывает обложки + youtube + шортсы,
+      # shorts — ТОЛЬКО шортсы. Отдельная стадия нужна потому, что covers.py
+      # рисует обложки заново каждым запуском, и прогон ради одних шортсов
+      # молча заменил бы уже принятые человеком обложки другими.
+      - name: Готовый final.mp4 из релиза, без пересборки
+        if: steps.pick.outputs.from_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -147,11 +184,15 @@ jobs:
           gh release download "final-${{ steps.pick.outputs.job }}" \
             --repo "${{ github.repository }}" \
             --pattern "final.mp4" --pattern "subs.srt" \
-            --dir "$DIR" --clobber
+            --pattern "marks_final.json" \
+            --dir "$DIR" --clobber || true
           test -f "$DIR/final.mp4" || {
             echo "нет final.mp4 в релизе final-${{ steps.pick.outputs.job }} — сначала нужен полный прогон (stage: auto)"
             exit 1
           }
+          test -f "$DIR/marks_final.json" \
+            && echo "marks_final.json взят из релиза" \
+            || echo "marks_final.json в релизе нет — shorts.py пересчитает сдвиг сам"
 
       - name: Только отбраковка — без скачивания
         if: steps.pick.outputs.stage == 'vet'
@@ -213,7 +254,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Этап 1 — озвучка, изображения, материал
-        if: steps.pick.outputs.stage != 'render' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet' && steps.pick.outputs.stage != 'post'
+        if: steps.pick.outputs.do_assets == 'true'
         env:
           XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
@@ -229,46 +270,46 @@ jobs:
       # Только если что-то качали. На чистом перерендере и на post папка не
       # менялась — сохранять кэш заново нечем и незачем.
       - name: Кладём материалы в кэш
-        if: steps.pick.outputs.stage != 'render' && steps.pick.outputs.stage != 'post'
+        if: steps.pick.outputs.do_assets == 'true'
         uses: actions/cache/save@v4
         with:
           path: work/${{ steps.pick.outputs.id }}/assets
           key: assets-${{ steps.pick.outputs.id }}-v1-${{ github.run_id }}
 
       - name: Этап 2 — монтаж
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet' && steps.pick.outputs.stage != 'post'
+        if: steps.pick.outputs.do_build == 'true'
         run: python pipeline/build.py jobs/${{ steps.pick.outputs.job }}.json
 
-      # ОБЛОЖКИ ДО youtube.py. Порядок не случайный: covers.py делает три
+      # ОБЛОЖКИ ДО youtube.py. Порядок не случайный: covers.py делает две
       # обложки и кладёт первую в thumbnail.jpg, а youtube.py, увидев
       # cover_1.jpg, свой кадровый вариант уже не рисует. Поменяй шаги
       # местами — и к человеку уедет превью попроще.
       - name: Этап 3 — две обложки
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
+        if: steps.pick.outputs.do_pack == 'true'
         env:
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
         run: python pipeline/covers.py jobs/${{ steps.pick.outputs.job }}.json
 
       - name: Этап 4 — комплект для YouTube
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
+        if: steps.pick.outputs.do_pack == 'true'
         run: python pipeline/youtube.py jobs/${{ steps.pick.outputs.job }}.json
 
       # ШОРТСЫ ПОСЛЕДНИМИ, на уже готовом final.mp4. Ничего не рендерят
       # заново: режут два куска из готового ролика, разворачивают в 9:16 и
-      # накладывают шапку с вопросом и пословные субтитры.
+      # накладывают шапку с вопросом и субтитры кусками фразы.
       #
       # continue-on-error: длинный ролик к этому моменту собран и лежит в
       # релизе. Уронить весь прогон из-за того, что beats.py не нашёл
       # годной развязки для шортса, значит потерять сорок минут рендера
       # ради необязательного довеска.
       - name: Этап 5 — два шортса
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
+        if: steps.pick.outputs.do_shorts == 'true'
         continue-on-error: true
         run: python pipeline/shorts.py jobs/${{ steps.pick.outputs.job }}.json 2
 
       - name: Находим готовое
         id: out
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
+        if: steps.pick.outputs.do_pack == 'true' || steps.pick.outputs.do_shorts == 'true'
         run: |
           set -e
           DIR=work/${{ steps.pick.outputs.id }}/out
@@ -282,7 +323,7 @@ jobs:
       # две обложки и субтитры. Шортсы помечены звёздочкой — на коротком
       # ролике второго шортса может не быть, и это не ошибка.
       - name: Выдаём ролик, шортсы и обложки
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
+        if: steps.pick.outputs.do_pack == 'true' || steps.pick.outputs.do_shorts == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: final-${{ steps.pick.outputs.job }}
@@ -295,12 +336,13 @@ jobs:
           files: |
             ${{ steps.out.outputs.dir }}/final.mp4
             ${{ steps.out.outputs.dir }}/subs.srt
+            ${{ steps.out.outputs.dir }}/marks_final.json
             ${{ steps.out.outputs.dir }}/short_*.mp4
             ${{ steps.out.outputs.dir }}/cover_*.jpg
           fail_on_unmatched_files: false
 
       - name: Комплект для выкладки отдельно
-        if: steps.pick.outputs.stage != 'assets' && steps.pick.outputs.stage != 'material' && steps.pick.outputs.stage != 'vet'
+        if: steps.pick.outputs.do_pack == 'true' || steps.pick.outputs.do_shorts == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: youtube-${{ steps.pick.outputs.job }}
