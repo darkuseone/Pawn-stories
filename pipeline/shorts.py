@@ -102,6 +102,17 @@ SUB_MAX_LINES = 2
 SUB_SIZE = 70
 SUB_MARGIN = 60            # поля стиля SUB, они же предел ширины строки
 
+# ГДЕ СТОЯТ СУБТИТРЫ — 0.66 высоты, а не 0.74. Ниже нельзя: в длинный
+# ролик ВЖЖЕНЫ плашки с числами (editorial/textcard.py, PLACES), они
+# занимают полосу 0.760-0.816 высоты кадра, и доли по высоте при crop+scale
+# в 9:16 сохраняются. На 0.74 субтитр наезжал на плашку прямо в кадре —
+# поймано на готовом шортсе ff-ep06, где «Under the treasure trove law
+# that» легло поверх «1996».
+#
+# Выше 0.62 тоже не стоит: низ кадра у Shorts закрывает интерфейс YouTube
+# (заголовок и кнопки), а слишком высокий субтитр лезет к шапке с вопросом.
+SUB_Y = 0.66
+
 FONT = "DejaVu Sans"
 # Файлы того же шрифта — нужны, чтобы МЕРИТЬ ширину строки перед рендером,
 # см. fit_size(). libass берёт шрифт по имени, PIL — только по файлу.
@@ -475,7 +486,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for s, e, c in subs:
         rows.append(
             f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
-            f"{{\\pos({W//2},{int(H*0.74)})}}"
+            f"{{\\pos({W//2},{int(H*SUB_Y)})}}"
             + "\\N".join(ass_escape(l) for l in wrap(c, SUB_MAX_CHARS)))
     out.write_text(head + "\n".join(rows) + "\n", encoding="utf-8")
     return out
