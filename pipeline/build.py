@@ -591,8 +591,19 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     kw = keywords_for(assets, job)
 
     def kw_of(p: Path):
+        # РАЗБИРАЕТСЯ .stem, А НЕ .name. Иначе у генерации, чьё имя не имеет
+        # третьего сегмента (img_001.jpg против clip_003_pexels.mp4),
+        # split("_")[1] отдаёт "001.jpg", int() падает, и слова ВСЕЙ
+        # генерации оказываются пустыми — она перестаёт подбираться по
+        # смыслу вовсе и ложится под текст случайно. На ff-ep06 это дало
+        # «подбор: генерация — 0 из 51 (0%)» при 35% экранного времени.
+        #
+        # Почему не ловилось раньше: у синтетики mock.py имя img_001_mock.jpg,
+        # третий сегмент есть, int("001") проходит — smoke.py показывал
+        # честные 50%, а боевой прогон молча давал ноль.
         try:
-            return kw.get((p.name.split("_")[0], int(p.name.split("_")[1])), set())
+            stem = p.stem
+            return kw.get((stem.split("_")[0], int(stem.split("_")[1])), set())
         except (IndexError, ValueError):
             return set()
 

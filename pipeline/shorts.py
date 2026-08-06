@@ -5,8 +5,7 @@ shorts.py — два вертикальных ролика из уже собр�
 
 Запускается ПОСЛЕ build.py, на готовом final.mp4. Ничего не рендерит заново
 и ничего не тратит: длинный ролик уже собран, здесь из него вырезаются два
-куска, поворачиваются в 9:16 и получают шапку с вопросом и пословные
-субтитры.
+куска, поворачиваются в 9:16 и получают шапку с вопросом и субтитры.
 
 Почему из готового файла, а не из плана
 ---------------------------------------
@@ -39,8 +38,8 @@ scale+crop — см. шапку build.py), и лимит Actions в 6 часов
 делся.
 
 При этом всё, что здесь нужно, ffmpeg делает нативно: crop+scale для 9:16,
-drawbox для рамки, libass для пословных субтитров. Пословная анимация — это
-одно событие ASS на слово, а не анимация в браузере.
+drawbox для плашек шапки, libass для субтитров: и перенос строк, и
+центрирование многострочного текста он делает сам, одним файлом.
 
 Remotion имело бы смысл, если бы понадобилась настоящая моушн-графика:
 3D-текст, сложные морфы, частицы, связанные с содержанием. Тогда это
@@ -49,15 +48,27 @@ Remotion имело бы смысл, если бы понадобилась на
 Откуда берутся тайм-коды слов
 -----------------------------
 Из marks.json — границы предложений, посчитанные из посимвольного
-выравнивания ElevenLabs. Внутри предложения слова раскладываются
-пропорционально длине: точных границ слов в marks.json нет, а скорость речи
-внутри одного предложения почти постоянна, и ошибка получается в пределах
-десятых долей секунды. Для субтитра, который висит треть секунды, этого
-достаточно; строить ради этого отдельный разбор block_NN.json не стоит —
-он привязал бы шортсы к внутренностям озвучки.
+выравнивания ElevenLabs. Они ИЗМЕРЕНЫ, а не угаданы, и субтитр идёт по
+ним.
+
+Субтитры кусками фразы, а не по слову
+-------------------------------------
+Пословная подача была первой и оказалась неверной: слово держится десятые
+доли секунды, а его тайм-код внутри предложения не измерен, а посчитан
+пропорционально длине слова. На быстрой речи подпись заметно отстаёт от
+голоса — это увидели на готовом шортсе. Кусок в одну-две строки живёт
+полторы-две секунды, и та же ошибка на нём уже не читается.
+
+Шапка с вопросом — три оформления
+---------------------------------
+Одна и та же белая плашка в каждой загрузке канала — такая же подпись
+конвейера, как один цветокор на все ролики. Вид выбирается жребием по id
+ролика своей лентой случайных чисел; внутри одного эпизода он общий на
+оба шортса. Подробности — у HEADER_STYLES.
 """
 
 import json
+import random
 import re
 import subprocess
 import sys
@@ -66,6 +77,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from jobspec import load_job
+from style import seed_from
 
 from editorial import beats as beats_mod
 
@@ -84,11 +96,43 @@ SHORT_MAX = 52.0
 BOX_SHARE = 0.20
 BOX_MARGIN = 36            # отступ рамки от краёв кадра
 
-# Субтитры: одно слово на экране. Слово короче этого висит дольше — иначе
-# предлоги мелькают быстрее, чем глаз их берёт.
-WORD_MIN_SEC = 0.18
+# Субтитры кусками фразы, а не по одному слову.
+SUB_MAX_CHARS = 20
+SUB_MAX_LINES = 2
+SUB_SIZE = 70
+SUB_MARGIN = 60            # поля стиля SUB, они же предел ширины строки
 
 FONT = "DejaVu Sans"
+# Файлы того же шрифта — нужны, чтобы МЕРИТЬ ширину строки перед рендером,
+# см. fit_size(). libass берёт шрифт по имени, PIL — только по файлу.
+FONT_FILES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+]
+
+# ─────────────────── ОФОРМЛЕНИЕ ШАПКИ ───────────────────
+#
+# Три вида вместо одной белой плашки на все ролики канала. Вопрос — то,
+# ради чего шортс досматривают, и если он выглядит одинаково в каждой
+# загрузке, это такая же подпись конвейера, как один цветокор на всё.
+#
+# Выбор идёт СВОЕЙ лентой случайных чисел (смещение +307), как у подложки
+# (+101) и эффектов (+211): правка оформления шапки не должна сдвигать ни
+# цветокор, ни переходы, ни движения камеры уже собранных роликов.
+#
+# Вид один на оба шортса эпизода: внутри одной загрузки оформление —
+# постоянная, разводятся между собой РОЛИКИ, а не куски одного ролика.
+HEADER_STYLES = ("paper", "night", "clean")
+
+# Цвета. ASS читает &HAABBGGRR (порядок байт обратный привычному RGB),
+# ffmpeg drawbox — 0xRRGGBB@прозрачность. Одни и те же цвета записаны
+# дважды в разных порядках именно поэтому, а не по недосмотру.
+CREAM_ASS = "&H00D8EAF2"       # #F2EAD8
+BROWN_ASS = "&H00161F2A"       # #2A1F16
+GOLD_BOX = "0xC9A227"
+PAPER_BOX = "0xF2EAD8"
+NIGHT_BOX = "0x120E0A"
 
 
 def log(*a):
@@ -216,34 +260,61 @@ def pick_windows(beats, marks, total, want=2):
 
 # ─────────────────────── СУБТИТРЫ ───────────────────────
 
-def words_with_times(marks, lo, hi, t0):
-    """
-    Слова с тайм-кодами, относительно начала куска.
+def split_chunks(text: str, per_line: int = SUB_MAX_CHARS,
+                 max_lines: int = SUB_MAX_LINES):
+    """Режет предложение на куски не длиннее max_lines строк, не рвя слов."""
+    out, cur = [], []
+    for w in text.split():
+        probe = cur + [w]
+        if len(wrap(" ".join(probe), per_line)) > max_lines and cur:
+            out.append(" ".join(cur))
+            cur = [w]
+        else:
+            cur = probe
+    if cur:
+        out.append(" ".join(cur))
+    return out
 
-    Внутри предложения слова раскладываются пропорционально числу символов.
-    Границ слов в marks.json нет, а скорость речи внутри одного предложения
-    почти постоянна — ошибка выходит в пределах десятых долей секунды, что
-    для субтитра длиной в треть секунды несущественно.
+
+def lines_with_times(marks, lo, hi, t0):
+    """
+    Субтитры КУСКАМИ ФРАЗЫ, а не по одному слову.
+
+    Пословная выдача выглядит бодрее, но читается плохо, и это заметили на
+    готовом шортсе: слово держится десятые доли секунды, а его тайм-код не
+    измерен, а посчитан пропорционально длине внутри предложения. На
+    быстрой речи накопленная ошибка видна — подпись отстаёт от голоса.
+
+    Кусок в одну-две строки живёт полторы-две секунды, и та же ошибка в
+    десятые доли на нём уже не читается. Границы предложений при этом
+    берутся из marks как есть — они ИЗМЕРЕНЫ выравниванием ElevenLabs, а
+    не угаданы; делится только само предложение, если оно длиннее двух
+    строк, и делится по тому же принципу пропорционально символам.
+
+    Нижней границы длительности здесь нет намеренно: растянуть короткий
+    кусок значило бы залезть на следующий и разъехаться со звуком, а
+    короткое предложение («Not gold.») и так висит около секунды.
     """
     out = []
     for m in marks[lo:hi + 1]:
         text = (m.get("text") or "").strip()
-        ws = [w for w in re.split(r"\s+", text) if w]
-        if not ws:
+        if not text:
+            continue
+        chunks = split_chunks(text)
+        if not chunks:
             continue
         dur = max(m["end"] - m["start"], 0.05)
-        total_chars = sum(len(w) for w in ws) or 1
+        total_chars = sum(len(c) for c in chunks) or 1
         cur = m["start"] - t0
-        for w in ws:
-            share = len(w) / total_chars
-            wd = max(WORD_MIN_SEC, dur * share)
-            out.append((max(0.0, cur), max(0.0, cur) + wd, w))
-            cur += dur * share
-    # подрезаем нахлёсты, чтобы два слова не висели разом
+        for c in chunks:
+            wd = dur * (len(c) / total_chars)
+            out.append((max(0.0, cur), max(0.0, cur) + wd, c))
+            cur += wd
+    # подрезаем нахлёсты, чтобы два куска не висели разом
     for i in range(len(out) - 1):
-        s, e, w = out[i]
-        out[i] = (s, min(e, out[i + 1][0]), w)
-    return [(s, e, w) for s, e, w in out if e > s]
+        s, e, c = out[i]
+        out[i] = (s, min(e, out[i + 1][0]), c)
+    return [(s, e, c) for s, e, c in out if e > s]
 
 
 def ass_time(t: float) -> str:
@@ -256,6 +327,37 @@ def ass_time(t: float) -> str:
 
 def ass_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace("{", "(").replace("}", ")")
+
+
+def fit_size(lines, max_w: int, size: int, floor: int = 30) -> int:
+    """
+    Уменьшает кегль, пока самая длинная строка не влезет в max_w.
+
+    Число символов в строке — плохая мера ширины: «illinois» и «MMMMMMMM»
+    одной длины занимают втрое разную ширину, а одно длинное слово (в этом
+    жанре сплошь «archaeologists» и «authentication») переносом не режется
+    вовсе и вылезает за кадр целиком. Первый прогон именно так и выехал
+    буквами за края кадра.
+
+    Меряется настоящим шрифтом. Если PIL или файл шрифта недоступны —
+    возвращается исходный кегль: подпись чуть шире кадра лучше, чем
+    упавшая сборка шортса.
+    """
+    if not lines:
+        return size
+    try:
+        from PIL import ImageFont
+    except ImportError:
+        return size
+    path = next((p for p in FONT_FILES if Path(p).exists()), None)
+    if not path:
+        return size
+    while size > floor:
+        f = ImageFont.truetype(path, size)
+        if max(f.getlength(l) for l in lines) <= max_w:
+            break
+        size -= 2
+    return size
 
 
 def wrap(text: str, per_line: int):
@@ -272,22 +374,83 @@ def wrap(text: str, per_line: int):
     return lines
 
 
-def build_ass(words, question: str, out: Path):
+def header_style_for(job) -> str:
+    """Оформление шапки — жребием по id ролика, своей лентой (см. HEADER_STYLES)."""
+    forced = (job.get("open_loop") or {}).get("header_style")
+    if forced in HEADER_STYLES:
+        return forced
+    return random.Random(seed_from(job["id"]) + 307).choice(HEADER_STYLES)
+
+
+def header_layout(question: str, style: str) -> dict:
     """
-    Файл субтитров: вопрос в шапке на весь кусок + слова по одному.
+    Геометрия шапки: где плашки, где текст, каким кеглем.
+
+    Считается В ОДНОМ месте, потому что плашки рисует ffmpeg (drawbox), а
+    текст — libass, и разъехаться они не должны. Раньше высота плашки
+    жила в render_short, а положение текста — в build_ass, и любая правка
+    одного требовала помнить про другое.
+
+    Пустой вопрос — пустой макет: ни плашек, ни текста. Пустая белая
+    коробка без букв занимает 20% кадра и не сообщает ничего, это уже
+    ловили на готовом шортсе.
+    """
+    lines = wrap(question.strip(), 24) if question else []
+    if not lines:
+        return dict(lines=[], boxes=[], size=0, cx=W // 2, cy=0,
+                    colour=CREAM_ASS, outline=0, shadow=0,
+                    outline_colour="&H00000000")
+
+    box_h = int(H * BOX_SHARE)
+    size = 66 if len(lines) <= 2 else (56 if len(lines) == 3 else 46)
+    # и всё равно меряем: длинное слово в вопросе вылезет за плашку
+    size = fit_size(lines, W - 2 * BOX_MARGIN - 60, size, floor=34)
+    cy = BOX_MARGIN + box_h // 2
+    x, w = BOX_MARGIN, W - 2 * BOX_MARGIN
+    # низ текстового блока — от него отбивается золотая линейка
+    rule_y = cy + int(len(lines) * size * 1.22) // 2 + 16
+    rule_w = min(w - 80, 240)
+
+    if style == "paper":
+        # тёплая бумага: тёмные буквы на кремовом, золотая линейка под текстом
+        return dict(
+            lines=lines, size=size, cx=W // 2, cy=cy,
+            colour=BROWN_ASS, outline_colour=BROWN_ASS, outline=0, shadow=0,
+            boxes=[(x, BOX_MARGIN, w, box_h, f"{PAPER_BOX}@0.96", "fill"),
+                   ((W - rule_w) // 2, rule_y, rule_w, 6, f"{GOLD_BOX}@0.95", "fill")])
+
+    if style == "night":
+        # тёмная плашка под цветокор канала, золотой брусок слева
+        return dict(
+            lines=lines, size=size, cx=W // 2 + 8, cy=cy,
+            colour=CREAM_ASS, outline_colour="&H00000000", outline=2, shadow=1,
+            boxes=[(x, BOX_MARGIN, w, box_h, f"{NIGHT_BOX}@0.80", "fill"),
+                   (x, BOX_MARGIN, 12, box_h, f"{GOLD_BOX}@0.95", "fill")])
+
+    # clean: плашки нет вовсе, буквы прямо на кадре с толстой обводкой
+    return dict(
+        lines=lines, size=size + 4, cx=W // 2, cy=cy,
+        colour=CREAM_ASS, outline_colour="&H00000000", outline=7, shadow=4,
+        boxes=[((W - rule_w) // 2, rule_y, rule_w, 7, f"{GOLD_BOX}@0.95", "fill")])
+
+
+def build_ass(subs, layout: dict, out: Path):
+    """
+    Файл субтитров: вопрос в шапке на весь кусок + субтитры кусками фразы.
 
     Оба слоя здесь, а не в drawtext, по одной причине: drawtext не умеет
-    ни переносить строки, ни центрировать многострочный текст, и каждое
-    слово в нём — отдельный фильтр в цепочке. На полусотне слов цепочка
-    становится нечитаемой, а на полутора сотнях — ещё и медленной. libass
-    берёт то же самое одним файлом.
-    """
-    box_h = int(H * BOX_SHARE)
-    q_lines = wrap(question.strip(), 26) if question else []
-    # шрифт вопроса подбирается под число строк, чтобы текст не вылезал
-    q_size = 62 if len(q_lines) <= 2 else (52 if len(q_lines) == 3 else 44)
-    q_y = BOX_MARGIN + box_h // 2
+    ни переносить строки, ни центрировать многострочный текст, и каждый
+    кусок в нём — отдельный фильтр в цепочке. libass берёт то же самое
+    одним файлом.
 
+    Вопрос ПРОЯВЛЯЕТСЯ за треть секунды (\\fad), а не возникает рывком на
+    первом кадре: рывок читается как склейка, наплыв — как приём.
+    """
+    q_size = layout["size"] or 1
+    # Кегль субтитров — по самой широкой строке ВСЕГО куска, а не по каждой
+    # отдельно: прыгающий от реплики к реплике размер читается как брак.
+    all_lines = [l for _, _, c in subs for l in wrap(c, SUB_MAX_CHARS)]
+    sub_size = fit_size(all_lines, W - 2 * SUB_MARGIN, SUB_SIZE, floor=34)
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -297,21 +460,23 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Q,{FONT},{q_size},&H00202020,&H00202020,&H00FFFFFF,-1,0,0,0,100,100,0,0,1,0,0,5,40,40,40,1
-Style: WORD,{FONT},108,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,6,3,5,60,60,60,1
+Style: Q,{FONT},{q_size},{layout['colour']},{layout['outline_colour']},&H00000000,-1,0,0,0,100,100,0,0,1,{layout['outline']},{layout['shadow']},5,40,40,40,1
+Style: SUB,{FONT},{sub_size},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,1,0,1,6,3,5,{SUB_MARGIN},{SUB_MARGIN},60,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     rows = []
-    if q_lines:
+    if layout["lines"]:
         rows.append(
             f"Dialogue: 0,{ass_time(0)},{ass_time(99999)},Q,,0,0,0,,"
-            f"{{\\pos({W//2},{q_y})}}" + "\\N".join(ass_escape(l) for l in q_lines))
-    for s, e, w in words:
+            f"{{\\pos({layout['cx']},{layout['cy']})\\fad(320,0)}}"
+            + "\\N".join(ass_escape(l) for l in layout["lines"]))
+    for s, e, c in subs:
         rows.append(
-            f"Dialogue: 1,{ass_time(s)},{ass_time(e)},WORD,,0,0,0,,"
-            f"{{\\pos({W//2},{int(H*0.72)})}}{ass_escape(w)}")
+            f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
+            f"{{\\pos({W//2},{int(H*0.74)})}}"
+            + "\\N".join(ass_escape(l) for l in wrap(c, SUB_MAX_CHARS)))
     out.write_text(head + "\n".join(rows) + "\n", encoding="utf-8")
     return out
 
@@ -319,7 +484,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 # ─────────────────────── РЕНДЕР ───────────────────────
 
 def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
-                 crf: int = 20, has_question: bool = True):
+                 crf: int = 20, boxes=None):
     """
     Вырезает кусок, разворачивает в 9:16 и накладывает шапку и субтитры.
 
@@ -332,24 +497,16 @@ def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
     декодирует всё от начала файла. На получасовом ролике разница — секунды
     против минут.
 
-    has_question=False УБИРАЕТ ОБЕ ПОЛОСЫ drawbox, а не только текст. Раньше
-    рамка рисовалась всегда, а текст в неё клала build_ass() только если
-    question был непустым — без вопроса в кадре повисала пустая белая
-    коробка без единой буквы внутри. Пустая рамка хуже отсутствующей: она
-    занимает 20% кадра, ничего не сообщая.
+    boxes приходят ГОТОВЫМИ из header_layout() — здесь не решается, что
+    рисовать. Пустой список значит «шапки нет вовсе»: без вопроса в кадре
+    когда-то повисала пустая белая коробка без единой буквы, а она занимает
+    20% кадра и не сообщает ничего.
     """
-    box_h = int(H * BOX_SHARE)
     # 1080 * 9/16 = 607.5; libx264 требует чётные размеры, берём 608
     crop_w = 608
-    box = ""
-    if has_question:
-        # белая рамка-шапка: заливка белым, поверх неё вопрос из ASS
-        box = (
-            f"drawbox=x={BOX_MARGIN}:y={BOX_MARGIN}:w={W-2*BOX_MARGIN}:h={box_h}:"
-            f"color=white@0.92:t=fill,"
-            f"drawbox=x={BOX_MARGIN}:y={BOX_MARGIN}:w={W-2*BOX_MARGIN}:h={box_h}:"
-            f"color=white:t=4,"
-        )
+    box = "".join(
+        f"drawbox=x={x}:y={y}:w={w}:h={h}:color={c}:t={t},"
+        for x, y, w, h, c, t in (boxes or []))
     vf = (
         f"crop={crop_w}:1080:(iw-{crop_w})/2:0,"
         f"scale={W}:{H}:flags=lanczos,setsar=1,"
@@ -376,6 +533,51 @@ def duration_of(p: Path) -> float:
         return 0.0
 
 
+# ─────────────────────── ТАЙМ-КОДЫ ГОТОВОГО РОЛИКА ───────────────────────
+
+def load_final_marks(job, assets: Path, out: Path):
+    """
+    Тайм-коды на шкале ГОТОВОГО final.mp4, а не кэшированной начитки.
+
+    Если build.py вставлял паузы перед главами, final.mp4 длиннее начитки
+    на их сумму, и резать куски по assets/marks.json значило бы промахи-
+    ваться на накопленную паузу — к концу получаса это уже секунд десять.
+
+    Три источника по убыванию надёжности:
+
+    1. out/marks_final.json — это ровно то, что писал build.py рядом с
+       роликом. Берём как есть.
+    2. Нет файла (стадия post/shorts на свежем раннере — в релизе лежит
+       только final.mp4): ПЕРЕСЧИТЫВАЕМ сдвиг теми же функциями build.py и
+       из тех же входов (сырые marks, total_audio из state.json, карта
+       глав из спецификации). Разбор долей детерминирован, поэтому границы
+       получаются те же, что были при сборке.
+    3. Нет и state.json — отдаём сырые marks и говорим об этом вслух:
+       ролик, собранный до появления пауз, так и режется, а новый лучше
+       порезать чуть мимо, чем не порезать вовсе.
+    """
+    final_marks = out / "marks_final.json"
+    if final_marks.exists():
+        return json.loads(final_marks.read_text(encoding="utf-8"))
+
+    raw = json.loads((assets / "marks.json").read_text(encoding="utf-8"))
+    state = assets / "state.json"
+    if not state.exists():
+        log("  ! нет ни marks_final.json, ни state.json — режу по сырым "
+            "тайм-кодам; если в ролике есть паузы глав, куски уедут")
+        return raw
+
+    import build as build_mod
+    total_audio = json.loads(state.read_text(encoding="utf-8"))["total_audio"]
+    beats = beats_mod.analyze(raw, job["script_blocks"], total_audio)
+    bounds = build_mod.chapter_boundaries(job, beats, total_audio)
+    if not bounds:
+        return raw
+    log(f"  marks_final.json нет — пересчитал сдвиг сам: {len(bounds)} пауз "
+        f"по {build_mod.CHAPTER_PAUSE:.1f} с")
+    return build_mod.shift_marks(raw, bounds, build_mod.CHAPTER_PAUSE)
+
+
 # ─────────────────────── ГЛАВНОЕ ───────────────────────
 
 def main(job_path, want=2):
@@ -386,15 +588,7 @@ def main(job_path, want=2):
     if not final.exists():
         raise SystemExit(f"нет {final} — сначала собери ролик (build.py)")
 
-    # marks_final.json — тайм-коды на шкале ГОТОВОГО final.mp4: если build.py
-    # вставлял паузы перед главами, final.mp4 длиннее исходной начитки, и
-    # резать куски по assets/marks.json (шкала БЕЗ пауз) значило бы всё время
-    # промахиваться на накопленную сумму пауз. Без этого файла (старые
-    # эпизоды, собранные до правки) — обычный assets/marks.json, как раньше.
-    marks_path = out / "marks_final.json"
-    if not marks_path.exists():
-        marks_path = assets / "marks.json"
-    marks = json.loads(marks_path.read_text(encoding="utf-8"))
+    marks = load_final_marks(job, assets, out)
     total = duration_of(final)
     if not marks or total <= 0:
         raise SystemExit("нет тайм-кодов или пустой ролик")
@@ -425,6 +619,9 @@ def main(job_path, want=2):
             f"{total/60:.1f} мин, а куски не должны пересекаться и стоять "
             f"вплотную — на коротком ролике второго места не остаётся")
 
+    style = header_style_for(job)
+    log(f"── оформление шапки: {style}")
+
     made, questions_used = [], []
     for n, (t0, t1, lo, hi, beat) in enumerate(windows, 1):
         # Свой вопрос под свой блок сценария, а не один на оба шортса: два
@@ -433,15 +630,16 @@ def main(job_path, want=2):
         # шортсу, либо выдаёт его развязку раньше, чем видео до неё дошло.
         # per_block ключуется строкой номера блока (JSON не умеет int-ключи).
         question = per_block.get(str(beat.block), default_question)
-        words = words_with_times(marks, lo, hi, t0)
-        ass = build_ass(words, question, out / f"short_{n}.ass")
+        layout = header_layout(question, style)
+        subs = lines_with_times(marks, lo, hi, t0)
+        ass = build_ass(subs, layout, out / f"short_{n}.ass")
         dst = out / f"short_{n}.mp4"
         log(f"── шортс {n}: {t0:.1f}–{t1:.1f} с ({t1-t0:.1f} с), "
-            f"доля «{beat.kind}», блок {beat.block}, слов {len(words)}, "
+            f"доля «{beat.kind}», блок {beat.block}, субтитров {len(subs)}, "
             f"вопрос: {question or '(нет)'}")
         render_short(final, t0, t1, ass, dst,
                      crf=int((job.get("style_override") or {}).get("crf", 20)),
-                     has_question=bool(question))
+                     boxes=layout["boxes"])
         got = duration_of(dst)
         if got > 60.5:
             log(f"  ! {got:.1f} с — длиннее 60, YouTube не примет как Shorts")

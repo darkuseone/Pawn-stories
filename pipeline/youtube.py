@@ -277,7 +277,7 @@ def main(job_path):
     if style_card.exists():
         thumb_style = json.loads(style_card.read_text(encoding="utf-8")).get(
             "thumb_style", thumb_style)
-    # ХОЗЯИН thumbnail.jpg — covers.py, если он уже отработал. Он делает три
+    # ХОЗЯИН thumbnail.jpg — covers.py, если он уже отработал. Он делает две
     # обложки с крупным белым заголовком слева и кладёт первую сюда же.
     # Здесь остался кадровый вариант со сменной раскладкой: он ничего не
     # стоит и работает без ключей, но перетирать им готовые обложки нельзя —
@@ -285,7 +285,7 @@ def main(job_path):
     # человеку.
     if (out / "cover_1.jpg").exists():
         thumb = out / "thumbnail.jpg"
-        log("превью : уже сделано covers.py (три обложки), не трогаю")
+        log("превью : уже сделано covers.py (две обложки), не трогаю")
     else:
         thumb = thumbnail(video, out / "thumbnail.jpg", at, y["title"],
                           thumb_style)
