@@ -1,0 +1,193 @@
+{
+  "id": "garage-sale-millions-ming-durer-faberge",
+
+  "topic": {
+    "slug": "flea-market-attic-masterpieces",
+    "keywords": [
+      "garage sale discovery",
+      "Ming dynasty porcelain",
+      "Albrecht Durer drawing",
+      "Faberge Imperial Egg",
+      "Declaration of Independence print",
+      "antique appraisal",
+      "auction records",
+      "Sothebys",
+      "Christies",
+      "hidden wealth"
+    ]
+  },
+
+  "voice_settings": {
+    "stability": 0.38,
+    "similarity": 0.72,
+    "style": 0.18
+  },
+
+  "bed_gain_db": -27.0,
+
+  "batch": true,
+  "material_overshoot": 1.4,
+  "fill_limit": 30,
+  "vet_vision": true,
+
+  "photo_sources": ["met", "artic", "cleveland", "loc", "wikimedia"],
+  "video_sources": ["pexels", "pixabay", "archive_org", "wikimedia_video"],
+
+  "script_blocks": [
+    "What strikes me most about these historical discoveries isn't the sheer quantity of money involved, but how remarkably invisible true genius can be to the untrained eye. In late 2020, a modest suburban yard sale took place near New Haven, Connecticut. Among the scattered household clutter, dusty porcelain mugs, second-hand kitchenware, and discarded trinkets sat a small, delicate blue-and-white porcelain bowl. It measured barely six inches across, hand-painted with intricate floral motifs depicting lotus, peony, and chrysanthemum blossoms around its curved body. The seller had tagged it with a handwritten masking tape sticker marked thirty-five dollars. An anonymous bargain hunter walked past, picked up the bowl, and noticed something subtly unusual about its glaze, temperature, and weight. It didn't feel like mass-produced modern ceramic from a commercial department store. There was a silky smoothness to the translucent surface, a crisp deep blue pigment, and an understated balance that spoke of a far higher level of historical craftsmanship than an ordinary cereal dish. The buyer didn't haggle over the price. They paid thirty-five dollars, placed the bowl carefully into a cardboard box, took it home, and immediately began researching early Asian ceramics in academic databases. What they were holding was not a twentieth-century reproduction or a decorative export piece made for tourist markets. It was an authentic early fifteenth-century Chinese porcelain bowl, crafted during the reign of the Yongle Emperor, the third ruler of the Ming Dynasty. To understand why this tiny object is so monumental, we have to travel back to early fifteenth-century Nanjing and Jingdezhen. The Yongle court was legendary for revolutionizing imperial porcelain production. Artisans refined the imported cobalt blue pigment, known as smalt, brought across thousands of miles from Persia along ancient trade routes. This created a deep, velvety indigo that bled slightly into the white porcelain body during high-temperature firing—a technical characteristic known among museum curators as heaping and piling. The imperial kilns worked under brutal precision, destroying any piece with the slightest defect. Only six other bowls of this specific lotus-pattern design are known to exist in the entire world, almost all of them housed in prestigious museum collections such as the British Museum and the Victoria and Albert Museum in London. How this imperial treasure traveled from a Ming Dynasty palace in China to a lawn in Connecticut remains a mystery lost to history. Perhaps it was brought home by an American officer or diplomat returning from overseas duty in the early twentieth century, or perhaps it sat unrecognized in a local family estate cabinet for generations, mistaken for cheap souvenir china. What makes this story so compelling isn't just the financial windfall, but the fact that hundreds of people likely walked past that same table without giving the bowl a second glance. We train our eyes to look for gold, sparkling diamonds, and loud designer signatures, but ancient craftsmanship often communicates in whisper-thin glazes and subtle proportions. When the buyer submitted detailed photographs to Sotheby's auction house in New York, senior specialists in Chinese art immediately realized they were looking at an undeniable Holy Grail. In March 2021, the thirty-five-dollar yard sale bowl went under the hammer. Bidding erupted across international phone lines, driven by passionate collectors who recognized the immense historical rarity of the Yongle mark. When the final gavel fell, the bowl sold for seven hundred and twenty-two thousand dollars. Think about that transformation for a moment: thirty-five dollars turned into nearly three-quarters of a million dollars in a matter of weeks. Yet, as extraordinary as this case is, it represents only one chapter in a much broader phenomenon of lost masterworks hiding in plain sight.",
+
+    "In a quiet suburban home in Massachusetts, an unassuming piece of yellowed paper sat tucked inside a forgotten estate collection for decades. In 2017, a local man attending a modest yard sale purchased the small drawing along with a collection of minor household trinkets for just thirty dollars. The artwork depicted a seated mother holding a young child, executed in fine black ink on aged linen paper. It bore a small, famous monogram at the bottom: the interlocking capital letters 'A' and 'D'. To most casual observers, a monogram like that on a piece of paper found at a yard sale suggests a cheap mass-produced print or a nineteenth-century student exercise. Albrecht Dürer, the Northern Renaissance master who lived from 1471 to 1528, is one of the most celebrated and thoroughly cataloged artists in human history. The idea that an original, previously unknown drawing by Dürer could simply be sitting on a folding table in suburban America sounded entirely preposterous to art historians. But the buyer decided to consult experts anyway, starting a journey that would take years to conclude. What followed was a multi-year international investigation that captivated the global art community. Scholars from the British Museum, the Albertina in Vienna, and major international auction houses subjected the fragile paper to rigorous scientific and forensic analysis. They examined the ink composition under ultraviolet light, studied the precise cross-hatching stroke technique, and analyzed the paper's physical watermark. The watermark proved to be the decisive piece of evidence: a Trident and City Gate motif that was used exclusively by Dürer's personal workshop in Nuremberg around the year 1506. The drawing, titled 'The Virgin and Child with a Flower on a Grassy Bench,' was confirmed to be an authentic, original draft created by Dürer himself as a preparatory study for a major panel painting. Art historians estimate that fewer than two dozen drawings by Dürer remain in private hands worldwide, making this discovery one of the most significant Renaissance finds of the twenty-first century. The sheer survival of a five-hundred-year-old masterwork on delicate paper through centuries of European wars, transatlantic migrations, and routine household cleanouts is nothing short of miraculous. When news of the authentication was formally announced by Agnews Gallery in London, art dealers estimated its market value at upwards of fifty million dollars. Consider the staggering contrast here: thirty dollars paid at a local suburban yard sale for a piece of paper that turned out to be one of the most important art historical discoveries of our time. Here is the part most retellings leave out: the original family who sold the drawing had inherited it from an architect relative who collected art, but had assumed it was merely a decorative print because it lacked a formal frame, glass protection, and gallery certificate. It serves as a stark reminder that in the world of fine art, visual assumptions are often the enemy of truth, and unexamined family heirlooms can hold history-changing significance.",
+
+    "When a Midwest scrap metal dealer paid thirteen thousand dollars for an ornate golden egg in 2004, he assumed he was making a straightforward financial flip. He bought the object at a local antique market in the American heartland, planning to melt down the gold and sell it for a modest profit of a few hundred dollars based strictly on its bullion weight. The egg was remarkably intricate, crafted from yellow gold with delicate floral filigree, standing on an ornate pedestal, and containing an exquisite luxury watch made by Vacheron Constantin inside. However, for years, no gold buyer or jeweler was willing to meet his asking price of fifteen thousand dollars. Buyers told him he had overpaid for the gold weight, and the intricate workmanship was dismissed as decorative nineteenth-century kitsch. Frustrated and heavily in debt, the scrap dealer decided to conduct a basic internet search late one night in 2012. He typed two words engraved on the internal clock mechanism into Google: 'Vacheron Constantin' and 'egg.' What popped up on his computer screen transformed his life forever. An article in a British newspaper quoted an antique expert describing a lost imperial treasure: the Third Imperial Easter Egg, created by Peter Carl Fabergé for Tsar Alexander III of Russia in 1887. The Tsar had presented the egg to his wife, Empress Maria Feodorovna, for Easter. Following the Russian Revolution of 1917, Bolshevik revolutionaries confiscated the Romanov royal treasures from the Kremlin. Many pieces were inventoried, dismantled, or melted down, while others disappeared into mysterious private hands during Soviet state sales in the nineteen-twenties and thirties. The Third Imperial Egg was last recorded in Soviet state archives in Moscow in 1922, after which all trace of it was lost to history. The American scrap dealer immediately flew to London to meet Kieran McCarthy, a world-renowned Fabergé expert at the royal jewelers Wartski. When McCarthy traveled to the dealer's home in the Midwest, he found the golden egg sitting on a kitchen counter next to a tub of margarine. Upon examining the craftsmanship, the gold purity, and the sapphires set into the stand, McCarthy confirmed what seemed mathematically impossible: this was indeed the long-lost Third Imperial Fabergé Egg. Out of fifty-two Imperial Easter eggs ever created by Fabergé for the Russian imperial court, only forty-four were known to have survived. This discovery brought the total back up to forty-five. The egg was subsequently purchased by a private collector for an estimated thirty-three million dollars. A thirteen-thousand-dollar scrap gold purchase had become one of the single most valuable antique discoveries in human history.",
+
+    "Beyond the sheer thrill of these individual stories lies a deeper question about how auction houses and scholars establish the authentic value of an artifact. Consider another legendary case from Adamstown, Pennsylvania. In 1989, a financial analyst bought a battered, ugly oil painting at a flea market for four dollars, simply because he liked the carved wooden frame. When he took the frame apart at home to repair the wood, the canvas fell out, revealing a folded piece of paper backing tucked behind the backing board. Unfolding it carefully, he found an original broadside printing of the United States Declaration of Independence. It was one of only twenty-four surviving copies printed by John Dunlap on the night of July fourth, 1776, to announce the birth of a new nation to the thirteen colonies. That four-dollar flea market find was later sold at auction for two million four hundred and twenty thousand dollars. Why do these extraordinary objects end up sitting on dusty tables for pennies in the first place? The answer lies in what appraisers call provenance decay. Over generations, family stories get lost or distorted. An heirloom passed down from a great-grandparent loses its historical context; documentation gets thrown away during estate cleanouts, and descendants assume that if an item were truly valuable, it would be in a museum or locked in a safe. Furthermore, our visual instincts often betray us. We are conditioned to associate value with shiny, flawless, or visibly expensive materials. Yet, an ancient Ming dynasty bowl, a Renaissance Dürer drawing, or an eighteenth-century document often looks muted, weathered, or fragile. The flea market buyers who made these life-changing discoveries didn't necessarily possess doctorates in art history. What they possessed was a healthy skepticism of appearance, an eye for unusual detail, and the patience to investigate further when something felt out of the ordinary. In the antique trade, thousands of priceless historical documents, Renaissance sketches, and royal jewels are undoubtedly sitting right now in attic trunks, thrift store bins, and storage lockers across the globe, waiting for someone to look past the dust.",
+
+    "Looking across these incredible discoveries, a fascinating pattern emerges regarding how human perception shapes our understanding of history. We live in an era where almost everything is cataloged, digitized, and price-checked within seconds on a smartphone. Yet, these cases prove that the physical world still holds vast pockets of unexamined history. A thirty-five-dollar bowl from Connecticut, a thirty-dollar drawing from Massachusetts, a scrap-gold Fabergé egg from the Midwest, and a four-dollar Declaration of Independence from Pennsylvania—together, these four items represent over eighty-five million dollars in recovered cultural heritage. But the true significance of these discoveries extends beyond the staggering dollar figures. Each object is a physical time capsule that connects us directly to a specific moment in human achievement: the imperial kilns of Ming Dynasty China, the Nuremberg workshop of Albrecht Dürer, the royal court of late nineteenth-century Imperial Russia, and the birth of American democracy in 1776. When these objects emerge from obscurity, they remind us that history isn't just something contained in textbooks or locked behind museum glass. History is tangible, durable, and sometimes sitting right in front of us at a Sunday morning yard sale. The next time you walk past an old frame, a dusty ceramic dish, or a piece of tarnished metal at a local flea market, take a closer look. You might not find a thirty-three-million-dollar Fabergé egg, but you will certainly gain a deeper appreciation for the hidden stories that surround us every single day."
+  ],
+
+  "_запросы_футажа": "У стока — то, что снимают много и при свете: барахолки, керамика крупным планом, молоток аукциона, антикварные полки, музеи. Конкретику (Минг, Дюрер, Фаберже, Dunlap) закрывают archive_queries и image_prompts, а не сток.",
+  "footage_queries": [
+    "flea market yard sale tables",
+    "garage sale sunny day outdoor",
+    "blue white porcelain close up",
+    "ceramic pottery bowl macro",
+    "auction gavel hitting block",
+    "auction room bidding phones",
+    "magnifying glass book pages",
+    "antique shop interior shelves",
+    "museum exhibition glass display",
+    "hands turning old book pages",
+    "gold necklace jewelry close up",
+    "wooden boxes attic sunlight",
+    "oil painting ornate wooden frame",
+    "old manuscript paper close up",
+    "estate sale household clutter"
+  ],
+
+  "archive_queries": [
+    "Ming Dynasty porcelain bowl museum",
+    "Yongle porcelain blue white lotus",
+    "Albrecht Durer drawing virgin child",
+    "Albrecht Durer monogram AD",
+    "Faberge Imperial egg Tsar Alexander III",
+    "Faberge egg gold enamel museum",
+    "Dunlap broadside Declaration Independence 1776",
+    "Sothebys auction room historical photo",
+    "Russian imperial crown jewels",
+    "Nuremberg Renaissance print workshop",
+    "Peter Carl Faberge gold work",
+    "Chinese imperial kiln Jingdezhen"
+  ],
+
+  "image_prompts": [
+    "A dimly lit antique appraisal room, extreme close-up of a delicate blue and white Ming porcelain bowl sitting on dark oak wood, dramatic warm spotlight highlighting blue cobalt lotus patterns, dust motes in air, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Suburban yard sale table covered with secondhand kitchenware and dusty porcelain, soft morning sunlight, handwritten price stickers, no faces visible, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Close-up of translucent blue and white porcelain glaze under raking light, cobalt pigment bleeding into white body, museum-quality detail, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "An aged Renaissance ink drawing of Virgin and Child on yellowed paper with visible watermark, laid flat on a scholar's dark wooden workbench beside a magnifying glass and old leather books, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Extreme close-up of interlocking capital letters A and D monogram in black ink on aged paper, soft side light, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Scholar's desk with ultraviolet lamp, loupe, and fragile yellowed drawing under examination, no faces, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "An intricate gold Russian Imperial Easter egg on a velvet pedestal, detailed gold filigree and sapphires glittering under auction house spotlights, warm amber reflections, dark background, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Ornate golden egg sitting casually on a modest kitchen counter beside everyday household items, warm domestic light, surreal contrast, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Close-up of gold filigree and sapphire settings on a jeweled pedestal stand, dark velvet background, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Hands wearing white archival gloves carefully holding a folded 18th century printed historical document on an antique wooden table, warm low-key lighting, historical atmosphere, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Battered oil painting in a carved wooden frame leaning against a flea market stall, harsh daylight, anonymous surroundings, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Folded yellowed broadside printing partially unfolded on dark wood, inked colonial typography visible, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "A crowded suburban garage sale on a sunny morning, tables filled with old vintage boxes, ceramic dishes, and framed art in soft natural sunlight, cinematic atmosphere, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Dusty attic trunk half open, old framed prints and ceramic dishes inside, shafts of daylight through a small window, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
+    "Auction house interior with empty chairs and a gavel on the podium, warm amber spotlights, no faces visible, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9"
+  ],
+
+  "reject": {
+    "clip": [],
+    "arch": []
+  },
+
+  "style_override": {
+    "generated_share": 0.30
+  },
+
+  "_источники": {
+    "policy": "Every core claim tagged VERIFIED / SINGLE SOURCE / DISPUTED / LEGEND. Disputed items are flagged in narration, not asserted.",
+    "claims": {
+      "Connecticut yard-sale Ming Yongle bowl bought for $35, sold at Sotheby's March 2021 for $722,000": "VERIFIED — Sotheby's press / contemporaneous reporting",
+      "Only six other bowls of this lotus-pattern design known worldwide": "SINGLE SOURCE RANGE — specialist consensus as reported; do not invent additional inventory counts",
+      "Massachusetts yard-sale Dürer drawing bought for ~$30, authenticated via Agnews / watermark evidence, estimated ~$50M": "VERIFIED as authentication announcement and market estimate — Agnews Gallery; treat private-market estimate as consensus estimate, not a completed sale",
+      "Midwest scrap dealer bought Third Imperial Fabergé Egg for $13,000, later sold privately for ~$33M": "VERIFIED discovery via Wartski; private sale price is an ESTIMATE reported by press, not a public auction hammer",
+      "Adamstown PA flea-market Dunlap Declaration found behind a $4 painting frame, later sold for $2,420,000": "VERIFIED — Sotheby's auction record (June 2000)",
+      "Four finds totaling over $85 million": "COMPOSITE — sum of reported figures including private-sale estimates; narrate as recovered heritage value, not four public hammer prices"
+    },
+    "do_not_claim": [
+      "exact identities of anonymous yard sale buyers",
+      "speculation on illicit smuggling of Ming bowl prior to US sale",
+      "unconfirmed prices for private sales beyond expert consensus estimates",
+      "that the Dürer drawing sold at a confirmed public auction for $50 million — that figure is a dealer/market estimate after authentication",
+      "that the Fabergé egg's private purchase price of $33 million is a public auction hammer — it is a press-reported estimate"
+    ],
+    "primary_sources": [
+      "Sotheby's Press Release (Ming Yongle Bowl, March 2021)",
+      "Agnews Gallery Authentication Statement (Albrecht Dürer Drawing, 2021)",
+      "Wartski Press Release (Third Imperial Fabergé Egg, March 2014)",
+      "Sotheby's Auction Catalog (Dunlap Declaration Broadside, June 2000)"
+    ]
+  },
+
+  "youtube": {
+    "title": "Yard Sale Finds That Were Worth Millions",
+    "title_alternatives": [
+      "They Paid $35... And Found an $85,000,000 Fortune",
+      "4 Everyday Finds That Turned Out to Be Worth Millions"
+    ],
+    "description_intro": "From a $35 Connecticut yard sale bowl that belonged to a Ming Dynasty Emperor to a scrap-gold purchase that proved to be a lost $33 million Fabergé Egg, explore four unbelievable discoveries hiding in plain sight.",
+    "chapters": [
+      "The $35 Imperial Ming Bowl",
+      "The $30 Dürer Renaissance Masterpiece",
+      "The $33M Lost Imperial Fabergé Egg",
+      "The $4 Declaration of Independence",
+      "The Psychology of Hidden Value"
+    ],
+    "description_notes": "All historical sales figures referenced are backed by public auction records from Sotheby's, Christie's, and gallery authentication releases. Private-sale figures (Dürer estimate, Fabergé) are expert consensus estimates, not public hammers.",
+    "hashtags": [
+      "#Antiques",
+      "#TreasureHunt",
+      "#FleaMarketFinds",
+      "#AuctionRecord",
+      "#History"
+    ],
+    "tags": [
+      "antiques",
+      "garage sale finds",
+      "flea market flips",
+      "valuable antiques",
+      "sothebys auction",
+      "ming dynasty",
+      "albrecht durer",
+      "faberge egg",
+      "hidden treasure",
+      "pawn stars",
+      "antique roadshow",
+      "rare discoveries",
+      "auction records"
+    ],
+    "thumbnail_at": 620.0
+  },
+
+  "_превью_промпт": {
+    "overlay_text": "$35 BOWL WORTH $722,000",
+    "text_placement": "left third, vertically centred, large bold white text",
+    "prompt": "Hyperrealistic 16:9 thumbnail. A dimly lit antique appraiser's dark wooden table with an exquisite blue and white oriental porcelain bowl lit by a single dramatic spotlight, extreme fine details, dusty atmospheric dark room. The LEFT THIRD of the frame is left empty, dark, unlit — reserved for large white bold text with black outline, added separately. Do NOT render any text, letters or logos in the image itself. Photorealistic, cinematic lighting, 8k, sharp focus."
+  },
+
+  "open_loop": {
+    "question": "How did four yard-sale finds add up to $85 million?",
+    "question_block": 1,
+    "payoff_block": 5,
+    "questions": {
+      "1": "What was that $35 blue-and-white bowl really worth?",
+      "2": "Was the $30 yard-sale drawing a real Dürer?",
+      "3": "What happened to the scrap dealer's golden egg?",
+      "4": "How did a $4 flea-market find become $2.4 million?"
+    }
+  },
+
+  "cover_text_by_model": true
+}
