@@ -52,13 +52,24 @@ jobs:
             JOB=""
             STAGE=auto
             # 1) Явный перезапуск: .github/rebuild/<job>
+            #    Имя файла = id джоба без .json. README/мусор игнорируем —
+            #    берём только то, для чего есть jobs/<name>.json.
             REBUILD=""
             if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
-              REBUILD=$(git diff --name-only "$BEFORE" "${{ github.sha }}" -- '.github/rebuild/' \
-                | grep -vE '/$|\.gitkeep$' | head -1 || true)
+              while IFS= read -r f; do
+                [ -z "$f" ] && continue
+                j=$(basename "$f")
+                case "$j" in
+                  README.md|README|.gitkeep) continue ;;
+                esac
+                if [ -f "jobs/$j.json" ]; then
+                  REBUILD=$j
+                  break
+                fi
+              done < <(git diff --name-only "$BEFORE" "${{ github.sha }}" -- '.github/rebuild/' || true)
             fi
             if [ -n "$REBUILD" ]; then
-              JOB=$(basename "$REBUILD")
+              JOB="$REBUILD"
               echo "Принудительный перезапуск: .github/rebuild/$JOB"
             else
               ADDED=""
