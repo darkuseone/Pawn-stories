@@ -268,18 +268,11 @@ MAGNIFIC_IMAGE_SHARE = 0.70
 MAGNIFIC_VIDEO_GEN_SHARE = 0.05
 MAGNIFIC_STOCK_DAILY_CAP = 15           # сток Magnific: видео+фото вместе, в сутки
 
-# НЕПОДТВЕРЖДЕНО. Документация канала называет движки по именам (Mystic —
-# «фирменный» движок с явным путём /v1/ai/mystic; Flux 2 Pro, Seedream
-# 4/4.5, Kling, MiniMax Hailuo, WAN и другие — только в таблице каталога,
-# без путей). Названы каналом («flux2pro», «nano-banana2», «seedream5pro»)
-# в переписке ДО того, как я увидел документацию — «seedream5pro» не
-# совпадает с «Seedream 4.5» из каталога, «nano-banana2» в каталоге не
-# упоминается вовсе. Собраны здесь как значения параметра model у Mystic
-# (тот же контракт, что и его собственный пример с model="realism") — это
-# рабочее предположение, а не факт: сверить фактические имена моделей в
-# Dashboard канала (magnific.com/developers/dashboard) перед первым платным
-# прогоном, поле легко переопределяется job["magnific_image_models"].
-MAGNIFIC_IMAGE_MODELS = ["flux2pro", "nano-banana2", "seedream5pro"]
+# Подтверждено логом ff-ep06: API Mystic отверг flux2pro / nano-banana2 /
+# seedream5pro (400; valid: fluid, realism, zen, flexible, super_real,
+# editorial…). Крутим три рабочих имени; переопределение —
+# job["magnific_image_models"].
+MAGNIFIC_IMAGE_MODELS = ["realism", "fluid", "zen"]
 
 # Kling и MiniMax Hailuo УБРАНЫ по решению канала — не использовать, хотя
 # подписка их и даёт. Остались Seedance и WAN.
