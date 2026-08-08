@@ -268,18 +268,11 @@ MAGNIFIC_IMAGE_SHARE = 0.70
 MAGNIFIC_VIDEO_GEN_SHARE = 0.05
 MAGNIFIC_STOCK_DAILY_CAP = 15           # сток Magnific: видео+фото вместе, в сутки
 
-# НЕПОДТВЕРЖДЕНО. Документация канала называет движки по именам (Mystic —
-# «фирменный» движок с явным путём /v1/ai/mystic; Flux 2 Pro, Seedream
-# 4/4.5, Kling, MiniMax Hailuo, WAN и другие — только в таблице каталога,
-# без путей). Названы каналом («flux2pro», «nano-banana2», «seedream5pro»)
-# в переписке ДО того, как я увидел документацию — «seedream5pro» не
-# совпадает с «Seedream 4.5» из каталога, «nano-banana2» в каталоге не
-# упоминается вовсе. Собраны здесь как значения параметра model у Mystic
-# (тот же контракт, что и его собственный пример с model="realism") — это
-# рабочее предположение, а не факт: сверить фактические имена моделей в
-# Dashboard канала (magnific.com/developers/dashboard) перед первым платным
-# прогоном, поле легко переопределяется job["magnific_image_models"].
-MAGNIFIC_IMAGE_MODELS = ["flux2pro", "nano-banana2", "seedream5pro"]
+# Подтверждено логом API Mystic: flux2pro / nano-banana2 / seedream5pro
+# отвергнуты (400; valid: fluid, realism, zen, flexible, super_real,
+# editorial…). Крутим три рабочих имени; переопределение —
+# job["magnific_image_models"].
+MAGNIFIC_IMAGE_MODELS = ["realism", "fluid", "zen"]
 
 # Kling и MiniMax Hailuo УБРАНЫ по решению канала — не использовать, хотя
 # подписка их и даёт. Остались Seedance и WAN.
@@ -401,16 +394,16 @@ def _magnific_generated_url(data: dict):
     return None
 
 
-def images_magnific(indexed_prompts, out: Path, key):
+def images_magnific(indexed_prompts, out: Path, key, models=None):
     """
     Основной объём картинок ролика (70% по умолчанию) — здесь, через
     подписку без лимита на генерацию.
 
     Эндпойнт /v1/ai/mystic и асинхронная пара POST+GET(task_id) —
     ПОДТВЕРЖДЕНО документацией канала (Mystic — «фирменный движок»,
-    рекомендованный там же). Имена в MAGNIFIC_IMAGE_MODELS для параметра
-    model — НЕТ, см. предупреждение у константы: сверить в Dashboard перед
-    платным прогоном.
+    рекомендованный там же). Имена в MAGNIFIC_IMAGE_MODELS — realism /
+    fluid / zen: подтверждены ответом API (старые ярлыки канала для
+    Flux/Seedream в Mystic не принимаются).
 
     Три модели по кругу, а не одна: одна модель на весь объём дала бы
     ролику однородный почерк генерации, от которого и так уводит вектор
@@ -421,11 +414,12 @@ def images_magnific(indexed_prompts, out: Path, key):
     (_magnific_poll), как и советует документация в этом случае.
     """
     out.mkdir(parents=True, exist_ok=True)
+    models = list(models or MAGNIFIC_IMAGE_MODELS)
     for i, (idx, p) in enumerate(indexed_prompts):
         dst = out / f"img_{idx:03d}.jpg"
         if dst.exists():
             continue
-        model = MAGNIFIC_IMAGE_MODELS[i % len(MAGNIFIC_IMAGE_MODELS)]
+        model = models[i % len(models)]
         r = requests.post(f"{MAGNIFIC_API}/v1/ai/mystic", timeout=TIMEOUT,
                           headers=_magnific_headers(key),
                           json={"prompt": p, "model": model})
@@ -1937,14 +1931,23 @@ def main(job_path, stage="all"):
     # меняться только оттого, что функция теперь умеет больше.
     if magnific_key:
         share = float(job.get("magnific_image_share", MAGNIFIC_IMAGE_SHARE))
+        models = list(job.get("magnific_image_models") or MAGNIFIC_IMAGE_MODELS)
         p_magnific, p_xai = split_indexed(prompts, share)
         log(f"  разделение генерации: {len(p_magnific)} magnific / "
             f"{len(p_xai)} xai ({share*100:.0f}/{(1-share)*100:.0f})")
-        images_magnific(p_magnific, work / "images", magnific_key)
+        images_magnific(p_magnific, work / "images", magnific_key, models)
+        # Незакрытые слоты magnific → xAI. Иначе при 5 промптах и доле 0.7
+        # все 5 уходят в magnific (cut=7 из 10), p_xai пуст, и падение
+        # Mystic роняет весь этап 1 вместе с уже оплаченной озвучкой.
+        missing = [(i, p) for i, p in p_magnific
+                   if not (work / "images" / f"img_{i:03d}.jpg").exists()]
+        if missing:
+            log(f"  ! magnific не закрыл {len(missing)} — добираю через xAI")
+            p_xai = list(p_xai) + missing
     else:
         p_xai = list(enumerate(prompts, 1))
 
-    if job.get("batch", True):
+    if p_xai and job.get("batch", True):
         # Пакет вдвое дешевле, но он же вдвое ненадёжнее: он может
         # закрыться пустым, протухнуть или потерять файл результатов.
         # Ронять на этом ВЕСЬ прогон нельзя — озвучка к этому моменту уже
@@ -1966,7 +1969,7 @@ def main(job_path, stage="all"):
             log("  перехожу на поштучную генерацию (полная цена вместо "
                 "половинной) — иначе теряется уже оплаченная озвучка")
             images_sync(p_xai, work / "images", model, key)
-    else:
+    elif p_xai:
         images_sync(p_xai, work / "images", model, key)
 
     # ПРОВЕРКА СРАЗУ, А НЕ НА МОНТАЖЕ. Без этой строки пустая папка
