@@ -11,12 +11,14 @@ on:
         description: 'material / vet / assets / render / post / shorts / auto'
         required: true
         default: 'auto'
-  # Автозапуск ТОЛЬКО на НОВЫХ jobs/*.json (git A), не на правках reject/
-  # queries — иначе каждая правка отбора жгла бы полный платный auto.
-  # Имя ролика берётся из добавленного файла, stage всегда auto.
+  # Автозапуск:
+  #   • новый jobs/*.json (git A) → stage auto
+  #   • файл .github/rebuild/<job> → принудительный перезапуск этого job
+  # Правки существующих jobs (reject/queries) полный auto НЕ жгут.
   push:
     paths:
       - 'jobs/*.json'
+      - '.github/rebuild/**'
 
 permissions:
   contents: write
@@ -41,22 +43,39 @@ jobs:
         id: pick
         run: |
           set -e
-          SKIP=false
           if [ "${{ github.event_name }}" = "push" ]; then
             BEFORE="${{ github.event.before }}"
             # Новый бранч / force-push: before — нули, сравниваем с родителем.
             if [ -z "$BEFORE" ] || echo "$BEFORE" | grep -qE '^0+$'; then
               BEFORE="$(git rev-parse 'HEAD^' 2>/dev/null || true)"
             fi
-            ADDED=""
+            JOB=""
+            STAGE=auto
+            # 1) Явный перезапуск: .github/rebuild/<job>
+            REBUILD=""
             if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
-              ADDED=$(git diff --diff-filter=A --name-only "$BEFORE" "${{ github.sha }}" -- 'jobs/*.json' \
-                | grep -vE '\.example\.json$|^jobs/_' \
-                | grep -vE '^jobs/auction-test\.json$' \
-                || true)
+              REBUILD=$(git diff --name-only "$BEFORE" "${{ github.sha }}" -- '.github/rebuild/' \
+                | grep -vE '/$|\.gitkeep$' | head -1 || true)
             fi
-            if [ -z "$ADDED" ]; then
-              echo "push без новых jobs/*.json — полный auto не запускаю"
+            if [ -n "$REBUILD" ]; then
+              JOB=$(basename "$REBUILD")
+              echo "Принудительный перезапуск: .github/rebuild/$JOB"
+            else
+              ADDED=""
+              if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
+                ADDED=$(git diff --diff-filter=A --name-only "$BEFORE" "${{ github.sha }}" -- 'jobs/*.json' \
+                  | grep -vE '\.example\.json$|^jobs/_' \
+                  | grep -vE '^jobs/auction-test\.json$' \
+                  || true)
+              fi
+              if [ -n "$ADDED" ]; then
+                # Несколько новых файлов за один push — берём первый.
+                JOB=$(basename "$(echo "$ADDED" | head -1)" .json)
+                echo "Автозапуск по новому файлу: jobs/$JOB.json"
+              fi
+            fi
+            if [ -z "$JOB" ]; then
+              echo "push без нового job и без .github/rebuild — полный auto не запускаю"
               echo "skip=true" >> $GITHUB_OUTPUT
               echo "job=" >> $GITHUB_OUTPUT
               echo "stage=auto" >> $GITHUB_OUTPUT
@@ -68,11 +87,6 @@ jobs:
               echo "from_release=false" >> $GITHUB_OUTPUT
               exit 0
             fi
-            # Несколько новых файлов за один push — берём первый, остальные
-            # следующим коммитом/пушем. Матрица на платный прогон не нужна.
-            JOB=$(basename "$(echo "$ADDED" | head -1)" .json)
-            STAGE=auto
-            echo "Автозапуск по новому файлу: jobs/$JOB.json"
           else
             JOB="${{ github.event.inputs.job }}"
             STAGE="${{ github.event.inputs.stage }}"
@@ -300,6 +314,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Этап 1 — озвучка, изображения, материал
+        id: assets
         if: steps.pick.outputs.do_assets == 'true'
         env:
           XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
@@ -313,10 +328,11 @@ jobs:
           MAGNIFIC_API_KEY:   ${{ secrets.MAGNIFIC_API_KEY }}
         run: python pipeline/assets.py jobs/${{ steps.pick.outputs.job }}.json
 
-      # Только если что-то качали. На чистом перерендере и на post папка не
-      # менялась — сохранять кэш заново нечем и незачем.
+      # Кэш кладём и при падении этапа 1: иначе оплаченная озвучка/картинки
+      # блоков 1..N пропадают вместе с раннером, а перезапуск жжёт квоту снова.
+      # На чистом render/post папка assets не трогалась — шаг и так не в do_assets.
       - name: Кладём материалы в кэш
-        if: steps.pick.outputs.do_assets == 'true'
+        if: ${{ always() && steps.pick.outputs.do_assets == 'true' && steps.pick.outputs.skip != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: work/${{ steps.pick.outputs.id }}/assets
