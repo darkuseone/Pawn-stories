@@ -23,8 +23,7 @@
     "style": 0.18
   },
 
-  "music": "assets/music/bed.mp3",
-  "bed_gain_db": -27.0,
+  "bed_gain_db": -24.0,
 
   "batch": true,
   "material_overshoot": 1.4,

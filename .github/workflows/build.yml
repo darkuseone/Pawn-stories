@@ -70,7 +70,14 @@ jobs:
             fi
             if [ -n "$REBUILD" ]; then
               JOB="$REBUILD"
-              echo "Принудительный перезапуск: .github/rebuild/$JOB"
+              # Первая строка файла — stage (render/auto/post/...). Пусто → auto.
+              # render: монтаж из кэша assets, без озвучки и генерации.
+              STAGE=$(head -n1 ".github/rebuild/$JOB" 2>/dev/null | tr -d '[:space:]')
+              case "$STAGE" in
+                material|vet|assets|render|post|shorts|auto) ;;
+                *) STAGE=auto ;;
+              esac
+              echo "Принудительный перезапуск: .github/rebuild/$JOB (stage=$STAGE)"
             else
               ADDED=""
               if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
@@ -357,8 +364,32 @@ jobs:
       # обложки и кладёт первую в thumbnail.jpg, а youtube.py, увидев
       # cover_1.jpg, свой кадровый вариант уже не рисует. Поменяй шаги
       # местами — и к человеку уедет превью попроще.
+      #
+      # stage=render: монтаж из кэша без озвучки/генерации. Обложки уже
+      # приняты человеком в прошлом релизе — не жжём xAI, забираем их.
+      - name: Обложки из прошлого релиза (render)
+        id: covers_cache
+        if: steps.pick.outputs.stage == 'render'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          DIR=work/${{ steps.pick.outputs.id }}/out
+          mkdir -p "$DIR"
+          gh release download "final-${{ steps.pick.outputs.job }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "cover_*.jpg" --pattern "thumbnail.jpg" \
+            --dir "$DIR" --clobber || true
+          if [ -f "$DIR/cover_1.jpg" ]; then
+            echo "обложки взяты из релиза — covers.py пропускаю"
+            echo "have_covers=true" >> $GITHUB_OUTPUT
+          else
+            echo "в релизе обложек нет — covers.py нарисует заново"
+            echo "have_covers=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Этап 3 — две обложки
-        if: steps.pick.outputs.do_pack == 'true'
+        if: steps.pick.outputs.do_pack == 'true' && steps.covers_cache.outputs.have_covers != 'true'
         env:
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
         run: python pipeline/covers.py jobs/${{ steps.pick.outputs.job }}.json

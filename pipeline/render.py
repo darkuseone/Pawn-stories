@@ -291,6 +291,24 @@ def duck_expression(points, depth: float) -> str:
     return "*".join(parts)
 
 
+# Haas: правый канал речи с задержкой 12 мс. ElevenLabs отдаёт моно;
+# aformat=stereo просто копировал L=R, и под начиткой ролик звучал как
+# моно даже при живой стерео-подложке (замер garage-sale: corr(L,R)=0.999
+# на речи при side/mid −38 дБ). 12 мс — классический Haas: ширина есть,
+# фантомный центр и разборчивость голоса не плывут.
+VOICE_HAAS_MS = 12
+
+
+def _voice_stereo_graph(label_in: str, label_out: str) -> str:
+    """Моно/стерео вход → стерео с Haas. label_in без скобок, например 0:a."""
+    return (
+        f"[{label_in}]aformat=sample_rates=48000:channel_layouts=mono,"
+        f"asplit[vl][vr];"
+        f"[vr]adelay=delays={VOICE_HAAS_MS}:all=1,volume=0.97[vrd];"
+        f"[vl][vrd]join=inputs=2:channel_layout=stereo[{label_out}]"
+    )
+
+
 def build_audio(voice: Path, bed, out: Path, total: float,
                 bed_gain_db: float = -26.0, duck_points=None,
                 duck_depth: float = 0.0):
@@ -317,7 +335,12 @@ def build_audio(voice: Path, bed, out: Path, total: float,
     fmt = "-ar 48000 -ac 2 -c:a aac -b:a 192k"
 
     if bed is None:
-        run(f"ffmpeg -y -i {shlex.quote(str(voice))} -af {shlex.quote(norm)} "
+        # Без подложки голос всё равно должен быть стерео с Haas —
+        # иначе «только голос» и полный микс звучат в разной ширине.
+        filt = (_voice_stereo_graph("0:a", "voc") +
+                f";[voc]{norm}[a]")
+        run(f"ffmpeg -y -i {shlex.quote(str(voice))} "
+            f"-filter_complex {shlex.quote(filt)} -map [a] "
             f"{fmt} {shlex.quote(str(out))}")
         return
 
@@ -339,11 +362,12 @@ def build_audio(voice: Path, bed, out: Path, total: float,
     duck = duck_expression(duck_points, duck_depth)
     duck_f = f"volume='{duck}':eval=frame," if duck else ""
 
-    # Оба входа приводятся к стерео ДО amix: иначе он берёт раскладку по
-    # первому входу, а первый — моно-начитка, и подложка теряет ширину.
-    filt = (f"[1:a]volume={bed_gain_db}dB,{duck_f}"
+    # Голос — Haas-стерео (см. VOICE_HAAS_MS). Подложка — как есть, стерео.
+    # Раньше голос был L=R: под ним стереоподложка на −27 дБ не слышалась,
+    # и весь ролик воспринимался как моно.
+    filt = (_voice_stereo_graph("0:a", "voc") + ";" +
+            f"[1:a]volume={bed_gain_db}dB,{duck_f}"
             f"aformat=channel_layouts=stereo:sample_rates=48000[bed];"
-            f"[0:a]aformat=channel_layouts=stereo:sample_rates=48000[voc];"
             f"[voc][bed]amix=inputs=2:duration=first:dropout_transition=0,"
             f"{norm}[a]")
     run(f"ffmpeg -y -i {shlex.quote(str(voice))} -i {shlex.quote(str(tmp))} "
