@@ -44,6 +44,38 @@ def main(job_path):
     rej = vet.rejected_from(work)
     print(f"   отбраковано: {({k: len(v) for k, v in rej.items()})}")
 
+    print("── локальный отбор (титры и дубли)")
+    from PIL import Image, ImageDraw, ImageFont
+    card = Image.new("RGB", (1280, 720), (8, 8, 8))
+    try:
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 72)
+    except OSError:
+        font = ImageFont.load_default()
+    ImageDraw.Draw(card).text((140, 280), "Internet Archive",
+                              font=font, fill=(240, 240, 240))
+    problems = vet.content_problems([card], job)
+    if not problems:
+        raise SystemExit("титр Internet Archive не поймался локально")
+    print(f"   титр пойман: {problems[0]}")
+    h1 = vet.dhash(card)
+    h2 = vet.dhash(card.copy())
+    if vet.hamming(h1, h2) != 0:
+        raise SystemExit("dHash не сходится на копии кадра")
+    import tempfile
+    td = Path(tempfile.mkdtemp())
+    a = td / "clip_001_pexels.jpg"
+    b = td / "clip_002_archive.org.jpg"
+    card.save(a)
+    card.save(b)
+    decided = {}
+    n_dup = vet.drop_visual_dupes(
+        [a, b], {a: vet.dhash(Image.open(a)), b: vet.dhash(Image.open(b))},
+        {a: "pexels", b: "archive.org"}, decided)
+    if n_dup != 1 or decided.get(b, (True, ""))[0] is not False:
+        raise SystemExit(f"дубль не отсеялся: {n_dup} {decided}")
+    print("   дубль archive.org vs pexels отсеян")
+
     print("── темы")
     print(f"   {channel.check(job) or 'не повтор'}")
 

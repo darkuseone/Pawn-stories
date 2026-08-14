@@ -70,7 +70,15 @@ jobs:
             fi
             if [ -n "$REBUILD" ]; then
               JOB="$REBUILD"
-              echo "Принудительный перезапуск: .github/rebuild/$JOB"
+              # Содержимое файла — стадия. Пустой или мусор → auto, как
+              # раньше. Иначе нельзя запустить shorts/material/render
+              # без workflow_dispatch.
+              raw=$(tr -d '[:space:]' < ".github/rebuild/$JOB" 2>/dev/null || true)
+              case "$raw" in
+                material|vet|assets|render|post|shorts|auto) STAGE=$raw ;;
+                *) STAGE=auto ;;
+              esac
+              echo "Принудительный перезапуск: .github/rebuild/$JOB (stage: $STAGE)"
             else
               ADDED=""
               if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
@@ -159,7 +167,7 @@ jobs:
         run: |
           set -e
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
+          sudo apt-get install -y -qq ffmpeg tesseract-ocr
           python -m pip install --upgrade pip --quiet
           python -m pip install --quiet pillow requests numpy
           fc-list | grep -qi dejavu || sudo apt-get install -y -qq fonts-dejavu
