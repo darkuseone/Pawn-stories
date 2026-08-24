@@ -163,6 +163,7 @@ jobs:
           python -m pip install --upgrade pip --quiet
           python -m pip install --quiet pillow requests numpy
           fc-list | grep -qi dejavu || sudo apt-get install -y -qq fonts-dejavu
+          fc-list | grep -qi "liberation sans" || sudo apt-get install -y -qq fonts-liberation
           echo "ffmpeg: $(ffmpeg -version | head -1)"
 
       - name: Проверка секретов
