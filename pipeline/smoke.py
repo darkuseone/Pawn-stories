@@ -88,6 +88,28 @@ def main(job_path):
                          f"ПОСЛЕ всего рендера")
     print(f"   списки на месте, теги {len(tags)}/{youtube.TAGS_LIMIT} символов")
 
+    # ШАПКА ШОРТСОВ. Вопрос сверху — то, ради чего шортс досматривают, и
+    # спецификация без open_loop даёт два шортса без единой надписи сверху
+    # и без вступления (это одно событие ASS). Так уехал ff-ep08: прогон
+    # написал предупреждение в лог и завершился успехом, а увидели это уже
+    # на готовых файлах. shorts.py теперь подставляет заголовок ролика,
+    # но заголовок — страховка, а не замена: он утверждение, а не вопрос.
+    print("── шапка шортсов")
+    loop = job.get("open_loop") or {}
+    per_block = loop.get("questions") or {}
+    if not isinstance(per_block, dict):
+        raise SystemExit("open_loop.questions должно быть картой "
+                         "{\"номер_блока\": \"вопрос\"}, ключ строкой")
+    if not (loop.get("question") or "").strip() and not per_block:
+        print("   ! нет open_loop — шапка возьмётся из заголовка ролика. "
+              "Свой вопрос под каждый блок задаётся в open_loop.questions")
+    else:
+        bad = [k for k in per_block if not str(k).lstrip("-").isdigit()]
+        if bad:
+            raise SystemExit(f"open_loop.questions: ключи {bad} — не номера "
+                             f"блоков. Ключ строкой: \"0\", \"1\", ...")
+        print(f"   вопрос есть, своих по блокам: {len(per_block)}")
+
     print("── план кадров")
     marks = json.loads((work / "marks.json").read_text())
     total = json.loads((work / "state.json").read_text())["total_audio"]

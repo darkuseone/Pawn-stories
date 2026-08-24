@@ -83,6 +83,19 @@
   "style_override": {
     "generated_share": 0.3
   },
+  "open_loop": {
+    "question": "Why is this penny worth $204,000?",
+    "question_block": 0,
+    "payoff_block": 4,
+    "questions": {
+      "0": "Is there a $204,000 penny in your change?",
+      "1": "Why did the Mint stop using copper in 1943?",
+      "2": "Why did the government say this coin didn't exist?",
+      "3": "How much is a 1943 copper penny really worth?",
+      "4": "What did the first one ever found sell for?",
+      "5": "Where did the $204,000 actually go?"
+    }
+  },
   "_источники": {
     "policy": "Every core claim tagged VERIFIED / SINGLE SOURCE / DISPUTED / LEGEND. Disputed items are flagged in narration, not asserted.",
     "do_not_claim": [
