@@ -32,6 +32,7 @@ import base64
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -124,6 +125,26 @@ DARK_MEAN = 16         # средняя яркость, ниже которой 
 MIN_PIXELS = 640 * 360
 STATIC_DELTA = 1.6     # средняя разница кадров видео, ниже — стоп-кадр
 
+# Похожесть кадров между сайтами. dHash 8×8, Hamming ≤ этого порога —
+# один и тот же кадр, скачанный дважды (Pexels и Pixabay, IA и Commons).
+DHASH_MAX = 10
+
+# Предпочтение, кого оставить при дубле. Меньше — лучше: музейный предмет
+# ценнее стокового клипа, сток — ценнее хроники с титрами IA.
+SRC_RANK = {
+    "met": 0, "artic": 1, "cleveland": 2, "loc": 3,
+    "pexels": 4, "pixabay": 5, "wikimedia": 6, "archive.org": 7,
+    "nasa": 8, "magnific": 9,
+}
+
+# Текст, которого в кадре документалки быть не должно. Ловится OCR-ом
+# по всем трём кадрам клипа: зрение раньше видело только середину и
+# пропускало заставку Internet Archive в начале файла.
+CREDIT_PHRASES = (
+    "internet archive", "archive.org", "prelinger", "wikimedia commons",
+    "getty images", "shutterstock", "adobe stock",
+)
+
 
 def log(*a):
     print(*a, flush=True)
@@ -132,7 +153,13 @@ def log(*a):
 # ─────────────────────── ДЕШЁВЫЙ ПРОХОД ───────────────────────
 
 def video_frames(path: Path, n=3):
-    """n кадров, равномерно по клипу. Первые кадры у стоков часто чёрные."""
+    """
+    n кадров с клипа. Для трёх — явно начало / середина / конец.
+
+    Раньше брались равномерные 25/50/75%: титр Internet Archive сидит
+    в первой-последней секунде, и на зрение уходила только середина —
+    заставка в ролик проходила.
+    """
     r = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "csv=p=0", str(path)], capture_output=True, text=True)
@@ -142,9 +169,13 @@ def video_frames(path: Path, n=3):
         dur = 0.0
     if dur <= 0:
         return []
+    if n == 3:
+        fracs = (0.08, 0.50, 0.92)
+    else:
+        fracs = tuple((k + 1) / (n + 1) for k in range(n))
     out = []
-    for k in range(1, n + 1):
-        at = dur * k / (n + 1)
+    for k, frac in enumerate(fracs, 1):
+        at = dur * frac
         tmp = path.with_suffix(f".probe{k}.png")
         subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{at:.2f}",
                         "-i", str(path), "-frames:v", "1", "-y", str(tmp)],
@@ -158,16 +189,157 @@ def video_frames(path: Path, n=3):
     return out
 
 
-def cheap_problems(path: Path):
+def dhash(im, size=8) -> int:
+    """64-битный difference hash. Соседние пиксели по строке."""
+    g = im.convert("L").resize((size + 1, size), Image.BILINEAR)
+    px = list(g.getdata())
+    bits = 0
+    width = size + 1
+    for y in range(size):
+        row = y * width
+        for x in range(size):
+            bits = (bits << 1) | int(px[row + x] > px[row + x + 1])
+    return bits
+
+
+def hamming(a: int, b: int) -> int:
+    return (a ^ b).bit_count()
+
+
+def ocr_text(im) -> str:
+    """Tesseract, если стоит. Нет бинаря — пустая строка, сборка не падает."""
+    import shutil
+    import tempfile
+    exe = shutil.which("tesseract")
+    if not exe:
+        return ""
+    fd, name = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    tmp = Path(name)
+    try:
+        im.convert("RGB").save(tmp)
+        r = subprocess.run(
+            [exe, str(tmp), "stdout", "-l", "eng", "--psm", "6"],
+            capture_output=True, text=True, timeout=20)
+        return (r.stdout or "").strip()
+    except Exception:
+        return ""
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def credit_in(text: str):
+    """Какая кредитная фраза/домен видна в OCR, или None."""
+    low = (text or "").lower()
+    if not low:
+        return None
+    for p in CREDIT_PHRASES:
+        if p in low:
+            return p
+    if re.search(r"https?://", low):
+        return "url"
+    m = re.search(r"\b[\w-]{3,}\.(com|org|net)\b", low)
+    if m:
+        return m.group(0)
+    return None
+
+
+def looks_like_title_card(im) -> bool:
     """
-    Брак формы, который виден без всякого зрения. Возвращает (кадр, список бед).
-    Кадр отдаётся наружу, чтобы не декодировать файл второй раз ради модели.
+    Тёмная или белая заставка с резкими буквами на почти плоском поле.
+
+    Смотрим долю сильных горизонтальных перепадов и долю «плоских» строк,
+    а не средний градиент: у титра IA почти весь кадр чёрный, буквы занимают
+    пару процентов, и среднее dx падает ниже любого порога «живой съёмки».
+
+    Газета, чек, рукопись сюда не попадают: у них средняя яркость
+    середины диапазона. Без этого эвристика резала бы архивный текст,
+    который ролику как раз нужен.
+    """
+    import numpy as np
+    g = np.asarray(im.convert("L").resize((160, 90)), float)
+    mean = float(g.mean())
+    if 50 < mean < 200:
+        return False
+    sharp = float((abs(g[:, 1:] - g[:, :-1]) > 40).mean())
+    flat = float((g.std(axis=1) < 15).mean())
+    return flat > 0.5 and sharp > 0.008
+
+
+def content_problems(frames, job=None):
+    """
+    Титры, сайты, ватермарки — по всем кадрам, бесплатно.
+
+    job нужен только чтобы в будущем сравнить OCR со словами темы;
+    отказ по пересечению ЗАПРОСА с темой здесь по-прежнему нельзя:
+    «hands examining antique object» не пересекается с keywords и
+    забраковал бы весь годный пул.
     """
     bad = []
-    if path.suffix.lower() in (".mp4", ".m4v"):
+    for fr in frames or []:
+        if looks_like_title_card(fr):
+            bad.append("титр или заставка")
+            break
+        hit = credit_in(ocr_text(fr))
+        if hit:
+            bad.append(f"кредит/сайт на кадре: {hit}")
+            break
+    return bad
+
+
+def drop_visual_dupes(files, hashes, srcs, decided):
+    """
+    Один кадр с двух сайтов — оставляем лучший источник.
+
+    decided: path -> (keep, why). Уже отвергнутые не участвуют.
+    Возвращает, сколько дополнительно забраковано.
+    """
+    alive = []
+    for f in files:
+        if decided.get(f, (True, ""))[0] is False:
+            continue
+        if hashes.get(f) is None:
+            continue
+        alive.append(f)
+    kept = []
+    dropped = 0
+    for f in alive:
+        h = hashes[f]
+        twin = next((g for hh, g in kept if hamming(h, hh) <= DHASH_MAX), None)
+        if twin is None:
+            kept.append((h, f))
+            continue
+        # Один сайт, два файла: похожая композиция (два кадра чердака) —
+        # не рехост. Схлопываем только одно и то же с Pexels и Pixabay.
+        sf, st = srcs.get(f) or "", srcs.get(twin) or ""
+        if sf == st:
+            kept.append((h, f))
+            continue
+        rank_f = SRC_RANK.get(srcs.get(f, ""), 50)
+        rank_t = SRC_RANK.get(srcs.get(twin, ""), 50)
+        if rank_f >= rank_t:
+            loser, winner = f, twin
+        else:
+            loser, winner = twin, f
+            kept = [(hh, g) for hh, g in kept if g is not twin]
+            kept.append((h, f))
+        decided[loser] = (False, f"дубль {winner.name}")
+        dropped += 1
+    return dropped
+
+
+def cheap_problems(path: Path):
+    """
+    Брак формы, который виден без всякого зрения.
+    Возвращает (кадр, список бед, pale, все_кадры).
+    Кадр — середина, чтобы не декодировать файл второй раз ради модели.
+    """
+    bad = []
+    frames = []
+    if path.suffix.lower() in (".mp4", ".m4v", ".webm", ".ogv"):
         frames = video_frames(path)
         if not frames:
-            return None, ["файл не открылся"], 0.0
+            return None, ["файл не открылся"], 0.0, []
         im = frames[len(frames) // 2]
         # Статичное «видео». Сток иногда отдаёт кадр, растянутый на десять
         # секунд: формально это видео, на экране — фотография без движения,
@@ -183,7 +355,8 @@ def cheap_problems(path: Path):
         try:
             im = Image.open(path).convert("RGB")
         except Exception as e:
-            return None, [f"файл не открылся: {e}"], 0.0
+            return None, [f"файл не открылся: {e}"], 0.0, []
+        frames = [im]
 
     w, h = im.size
     if w * h < MIN_PIXELS:
@@ -201,7 +374,7 @@ def cheap_problems(path: Path):
     if mean < DARK_MEAN:
         bad.append(f"кадр практически чёрный (яркость {mean:.0f})")
 
-    return im, bad, pale
+    return im, bad, pale, frames
 
 
 # ─────────────────────── ЗРЕНИЕ ───────────────────────
@@ -482,7 +655,7 @@ def vet_all(job, work: Path, use_vision=True):
         probe = None
         for files in groups.values():
             for f in files:
-                im, bad, _ = cheap_problems(f)
+                im, bad, *_ = cheap_problems(f)
                 if im is not None:
                     probe = im
                     break
@@ -504,16 +677,28 @@ def vet_all(job, work: Path, use_vision=True):
         log(f"── проверяю {kind}: {len(files)} шт")
 
         decided, ask_list, frames = {}, [], {}
+        hashes, srcs = {}, {}
         for f in files:
-            im, bad, pale = cheap_problems(f)
+            im, bad, pale, probed = cheap_problems(f)
             frames[f] = im
             src, query = meta.get(f.name, ("", ""))
+            srcs[f] = src
+            if im is not None:
+                hashes[f] = dhash(im)
+            extra = content_problems(probed, job)
+            if extra:
+                bad = list(bad) + extra
             verdict, why = triage(f, im, bad, pale, src, query,
                                   current_queries, trusted)
             if verdict == "ask" and im is not None:
                 ask_list.append((f, why))
             else:
                 decided[f] = (verdict == "keep", why)
+
+        n_dup = drop_visual_dupes(files, hashes, srcs, decided)
+        if n_dup:
+            log(f"   дублей между источниками: {n_dup}")
+            ask_list = [(f, why) for f, why in ask_list if f not in decided]
 
         log(f"   первый ярус решил {len(decided)} бесплатно, "
             f"зрению осталось {len(ask_list)}")

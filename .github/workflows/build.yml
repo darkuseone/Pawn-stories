@@ -70,7 +70,15 @@ jobs:
             fi
             if [ -n "$REBUILD" ]; then
               JOB="$REBUILD"
-              echo "Принудительный перезапуск: .github/rebuild/$JOB"
+              # Содержимое файла — стадия. Пустой или мусор → auto, как
+              # раньше. Иначе нельзя запустить shorts/material/render
+              # без workflow_dispatch.
+              raw=$(tr -d '[:space:]' < ".github/rebuild/$JOB" 2>/dev/null || true)
+              case "$raw" in
+                material|vet|assets|render|post|shorts|auto) STAGE=$raw ;;
+                *) STAGE=auto ;;
+              esac
+              echo "Принудительный перезапуск: .github/rebuild/$JOB (stage: $STAGE)"
             else
               ADDED=""
               if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
@@ -159,7 +167,7 @@ jobs:
         run: |
           set -e
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
+          sudo apt-get install -y -qq ffmpeg tesseract-ocr
           python -m pip install --upgrade pip --quiet
           python -m pip install --quiet pillow requests numpy
           fc-list | grep -qi dejavu || sudo apt-get install -y -qq fonts-dejavu
@@ -242,6 +250,23 @@ jobs:
           key: assets-${{ steps.pick.outputs.id }}-v1-${{ github.run_id }}
           restore-keys: |
             assets-${{ steps.pick.outputs.id }}-v1-
+
+      # material/vet/render не заказывают озвучку заново. Если кэш не
+      # поднялся, папка пустая: material скачает только футаж и запишет
+      # его новым ключом — следующий render потеряет оплаченный голос.
+      - name: Озвучка из кэша на месте
+        if: steps.pick.outputs.skip != 'true' && (steps.pick.outputs.stage == 'material' || steps.pick.outputs.stage == 'vet' || steps.pick.outputs.do_build == 'true')
+        run: |
+          set -e
+          VOICE="work/${{ steps.pick.outputs.id }}/assets/voice_full.m4a"
+          test -f "$VOICE" || {
+            echo "нет $VOICE — кэш assets-${{ steps.pick.outputs.id }}-v1- не поднялся"
+            echo "без озвучки material/vet/render запускать нельзя: следующий"
+            echo "прогон затёр бы оплаченный голос пустым кэшем. Нужен полный"
+            echo "stage: auto (или assets), если кэш уже протух."
+            exit 1
+          }
+          echo "озвучка на месте: $(du -h "$VOICE" | cut -f1)"
 
       # Стадии post и shorts: упаковка переделывается без пересборки монтажа.
       # Монтаж (build.py) не бесплатный по времени (70-90 минут ffmpeg на
@@ -355,9 +380,12 @@ jobs:
 
       # Кэш кладём и при падении этапа 1: иначе оплаченная озвучка/картинки
       # блоков 1..N пропадают вместе с раннером, а перезапуск жжёт квоту снова.
-      # На чистом render/post папка assets не трогалась — шаг и так не в do_assets.
+      # material/vet тоже пишут в assets (новый футаж, vetted.json) — без
+      # save следующий stage: render поднял бы СТАРЫЙ кэш, и титры IA,
+      # которые только что отбраковали, снова попали бы в монтаж.
+      # На чистом render/post/shorts папка assets не менялась — save не нужен.
       - name: Кладём материалы в кэш
-        if: ${{ always() && steps.pick.outputs.do_assets == 'true' && steps.pick.outputs.skip != 'true' }}
+        if: ${{ always() && steps.pick.outputs.skip != 'true' && (steps.pick.outputs.do_assets == 'true' || steps.pick.outputs.stage == 'material' || steps.pick.outputs.stage == 'vet') }}
         uses: actions/cache/save@v4
         with:
           path: work/${{ steps.pick.outputs.id }}/assets

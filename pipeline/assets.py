@@ -52,8 +52,22 @@ CLIP_MIN_WIDTH = 1280                   # ниже 720p не берём — за
 CLIP_MAX_WIDTH = 1920                   # выше 1080p не нужно, только вес
 
 
-def trim_long_clip(path: Path, limit: float = MAX_CLIP_SECONDS) -> None:
-    """Подрезает скачанный клип до потолка. Тихо ничего не делает, если короче."""
+# У хроники Internet Archive / Commons в начале почти всегда титр
+# «Internet Archive» / «Prelinger Archives» на несколько секунд. Если
+# резать с нуля, в ролик уезжает именно заставка, а не бытовая съёмка.
+CREDIT_SKIP = 8.0
+
+
+def trim_long_clip(path: Path, limit: float = MAX_CLIP_SECONDS,
+                   from_middle: bool = False) -> None:
+    """
+    Подрезает скачанный клип до потолка. Тихо ничего не делает, если короче
+    и резать с начала.
+
+    from_middle: берём окно из середины и пропускаем первые CREDIT_SKIP
+    секунд — для archive.org и Wikimedia, где заставка кредитов сидит
+    в начале файла.
+    """
     r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
                         "format=duration", "-of", "csv=p=0", str(path)],
                        capture_output=True, text=True)
@@ -61,19 +75,28 @@ def trim_long_clip(path: Path, limit: float = MAX_CLIP_SECONDS) -> None:
         dur = float(r.stdout.strip())
     except ValueError:
         return
-    if dur <= limit + 0.5:
+    start = 0.0
+    if from_middle and dur > CREDIT_SKIP + 4.0:
+        start = CREDIT_SKIP
+    if dur > limit + 0.5:
+        start = max(start, (dur - limit) / 2.0)
+    elif start < 0.4:
+        return
+    take = min(limit, max(0.0, dur - start))
+    if take < 2.0:
         return
     tmp = path.with_suffix(".trim.mp4")
-    # -c copy режет по ближайшему ключевому кадру: не по-кадрово точно, но
-    # для отрывка из середины стока это безразлично, зато мгновенно.
+    # -ss ДО -i + -c copy: режет по ближайшему ключевому кадру. Для
+    # отрывка из середины стока это безразлично, зато мгновенно.
     res = subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-i", str(path), "-t", f"{limit:.2f}",
+        ["ffmpeg", "-v", "error", "-y",
+         "-ss", f"{start:.2f}", "-i", str(path), "-t", f"{take:.2f}",
          "-c", "copy", "-an", str(tmp)], capture_output=True)
     if res.returncode == 0 and tmp.exists() and tmp.stat().st_size > 20000:
         was = path.stat().st_size // 1048576
         tmp.replace(path)
-        log(f"    подрезан с {dur:.0f} до {limit:.0f} с "
-            f"({was} -> {path.stat().st_size // 1048576} МБ)")
+        log(f"    подрезан с {dur:.0f} до {take:.0f} с "
+            f"(старт {start:.0f} с, {was} -> {path.stat().st_size // 1048576} МБ)")
     else:
         tmp.unlink(missing_ok=True)
 
@@ -788,6 +811,21 @@ def short_query(q: str, keep: int = 2) -> str:
     return " ".join(ws[:keep]) if ws else q
 
 
+def _flat_meta(*objs) -> str:
+    """title/subject/description из ответа IA — строка или список."""
+    parts = []
+    for obj in objs:
+        if not isinstance(obj, dict):
+            continue
+        for key in ("title", "subject", "description"):
+            v = obj.get(key)
+            if isinstance(v, list):
+                parts.extend(str(x) for x in v if x)
+            elif v:
+                parts.append(str(v))
+    return " ".join(parts)
+
+
 def src_archive_org(q, n):
     """
     Хроника из archive.org/details/movies.
@@ -806,17 +844,30 @@ def src_archive_org(q, n):
                                   f'(collection:(prelinger) OR '
                                   f'collection:(publicmoviescollection) OR '
                                   f'licenseurl:(*publicdomain*))',
-                             "fl[]": "identifier", "rows": n * 2,
+                             "fl[]": ["identifier", "title", "subject"],
+                             "rows": n * 4,
                              "output": "json"})
     if not ok(r, "archive.org", q):
         return []
-    out = []
-    # не больше четырёх обращений за метаданными и по 25 секунд на каждое:
-    # это самый медленный источник, и на нём легко просидеть минуты
-    for d in r.json().get("response", {}).get("docs", [])[:4]:
+    out, dropped = [], 0
+    # не больше дюжины обращений за метаданными: это самый медленный
+    # источник, и на нём легко просидеть минуты. Кандидатов больше четырёх,
+    # потому что часть отсеется relevant() по названию.
+    for d in r.json().get("response", {}).get("docs", [])[:12]:
+        blob = _flat_meta(d)
+        if blob and not relevant(q, blob):
+            dropped += 1
+            continue
         ident = d["identifier"]
-        meta = requests.get(f"https://archive.org/metadata/{ident}",
-                            timeout=25, headers=UA).json()
+        try:
+            meta = requests.get(f"https://archive.org/metadata/{ident}",
+                                timeout=25, headers=UA).json()
+        except Exception:
+            continue
+        blob2 = _flat_meta(d, meta.get("metadata"))
+        if blob2 and not relevant(q, blob2):
+            dropped += 1
+            continue
         # Берём САМЫЙ ЛЁГКИЙ подходящий файл, а не первый попавшийся.
         # В хронике рядом с обзорной нарезкой лежит полнометражная версия
         # на несколько гигабайт, и первым в списке оказывается как повезёт.
@@ -837,6 +888,8 @@ def src_archive_org(q, n):
                 "src": "archive.org", "kind": "video"})
         if len(out) >= n:
             break
+    if dropped:
+        log(f"    archive.org «{q}»: отсеяно {dropped} не по теме")
     return out
 
 
@@ -998,8 +1051,12 @@ def src_wikimedia_video(q, n):
                              "format": "json"})
     if not ok(r, "wikimedia_video", q):
         return []
-    out = []
+    out, dropped = [], 0
     for page in (r.json().get("query", {}).get("pages", {}) or {}).values():
+        title = page.get("title") or ""
+        if title and not relevant(q, title):
+            dropped += 1
+            continue
         ii = (page.get("imageinfo") or [{}])[0]
         lic = ((ii.get("extmetadata") or {}).get("LicenseShortName", {})
                .get("value", "")).lower()
@@ -1015,6 +1072,8 @@ def src_wikimedia_video(q, n):
         out.append({"url": url, "src": "wikimedia", "kind": "video"})
         if len(out) >= n:
             break
+    if dropped:
+        log(f"    wikimedia_video «{q}»: отсеяно {dropped} не по теме")
     return out
 
 
@@ -1261,7 +1320,9 @@ def gather(queries, per_query, sources, out: Path, kind, budget=GATHER_BUDGET):
                     # прогонами, и лишние секунды в нём — это лишние
                     # мегабайты на каждой пересборке.
                     if it["kind"] == "video":
-                        trim_long_clip(dst)
+                        src = (it.get("src") or "")
+                        trim_long_clip(
+                            dst, from_middle=src in ("archive.org", "wikimedia"))
                     # запрос сохраняется рядом с файлом: по нему build.py потом
                     # подбирает кадр под то, что звучит в эту секунду
                     got.append({"file": str(dst), "q": q, **it})
