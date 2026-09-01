@@ -294,7 +294,7 @@ def _check_slideshow(shots):
     медленным наездом и одинаковым растворением. Именно такое сочетание
     площадка и описывает словом «шаблонное».
     """
-    images = [s for s in shots if s["kind"] != "clip"]
+    images = [s for s in shots if s["kind"] not in ("clip", "card")]
     if len(shots) < 10 or len(images) / len(shots) < 0.92:
         return []
     durs = [s["duration"] for s in shots]
@@ -365,7 +365,7 @@ def metrics(shots):
         return {}
     durs = [s["duration"] for s in shots]
     mean = statistics.fmean(durs)
-    images = [s for s in shots if s["kind"] != "clip"]
+    images = [s for s in shots if s["kind"] not in ("clip", "card")]
     speeds = [s.get("speed", 1.0) for s in images] or [1.0]
     trans = Counter(s.get("transition", "?") for s in shots)
     return dict(

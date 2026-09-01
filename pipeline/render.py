@@ -171,75 +171,64 @@ def render_footage_clip(src: Path, out: Path, dur: float, start: float = 0.0,
     run(cmd)
 
 
-# Шрифт карточки главы — тот же список кандидатов, что и у textcard.py:
-# DejaVu стоит на раннере GitHub Actions, остальное — запасной путь для
-# локального прогона на другой машине.
-CARD_FONT_CANDIDATES = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-]
+def _freeze_frame(src: Path, dst: Path, start: float = 0.0) -> bool:
+    """Первый кадр файла (фото или клип) — фон карточки главы без движения."""
+    r = subprocess.run(
+        ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", str(src),
+         "-frames:v", "1", str(dst)],
+        capture_output=True)
+    return r.returncode == 0 and dst.exists() and dst.stat().st_size > 1000
 
 
-def _card_font():
-    for p in CARD_FONT_CANDIDATES:
-        if Path(p).exists():
-            return p
-    return None
-
-
-def _wrap_card_text(text: str, per_line: int = 24):
-    words, lines, cur = text.split(), [], ""
-    for w in words:
-        probe = f"{cur} {w}".strip()
-        if len(probe) > per_line and cur:
-            lines.append(cur)
-            cur = w
-        else:
-            cur = probe
-    if cur:
-        lines.append(cur)
-    return lines
-
-
-def render_card(text: str, out: Path, dur: float):
+def render_card(text: str, out: Path, dur: float, bg=None, bg_start: float = 0.0):
     """
-    Чёрная карточка с названием главы — пауза перед новой историей.
+    Пауза перед новой историей: кадр следующей истории + стекло с названием.
 
-    Чёрный кадр с текстом, а не наплыв поверх материала: тайминг ставит
-    паузу настоящей тишиной в звуке (см. build.py, voice_with_pauses), а
-    картинка должна недвусмысленно сигналить «здесь начинается следующая
-    часть», а не мелькнуть посреди прежней сцены.
+    Тишина в звуке по-прежнему настоящая (build.py, voice_with_pauses).
+    Картинка больше не чёрная карточка: фон — замороженный первый кадр
+    следующего шота, поверх — стекло Oswald, кегль как у названия выпуска
+    выпуска, fade in/out внутри паузы. Ken Burns сюда не ставится — у
+    карточки нет ключей move/speed/framing (см. insert_chapter_cards).
 
-    Текст идёт через textfile, не через text=: у названий глав попадаются
-    апострофы и двоеточия, а textfile не требует их экранировать вовсе —
-    та же причина, по которой covers.py и shorts.py избегают ручного
-    экранирования там, где можно.
-
-    Кодируется теми же параметрами, что и обычный кадр (crf 18, veryfast,
-    yuv420p): join() выше по конвейеру ГРЕЙДИТ и склеивает кадры между
-    собой одинаково для любого kind, включая card — отдельный цветокор
-    или его отсутствие для карточки означали бы правку join(), а сейчас
-    карточка просто ещё один вход в ту же цепочку фильтров.
+    Кодируется теми же параметрами, что и обычный кадр: join() грейдит
+    любой kind одинаково.
     """
-    font = _card_font()
-    draw = ""
-    txt_path = out.with_suffix(".txt")
-    if font:
-        txt_path.write_text("\n".join(_wrap_card_text(text)), encoding="utf-8")
-        fade = min(0.6, dur / 4)
-        alpha = (f"if(lt(t\\,{fade:.2f})\\,t/{fade:.2f}\\,"
-                f"if(gt(t\\,{dur - fade:.2f})\\,({dur:.2f}-t)/{fade:.2f}\\,1))")
-        draw = (f",drawtext=fontfile={shlex.quote(font)}:"
-                f"textfile={shlex.quote(str(txt_path))}:"
-                f"fontcolor=white:fontsize=66:line_spacing=16:"
-                f"x=(w-text_w)/2:y=(h-text_h)/2:alpha='{alpha}'")
-    cmd = (f"ffmpeg -y -f lavfi -i color=c=black:s={W}x{H}:r={FPS}:d={dur:.3f} "
-           f"-vf {shlex.quote('format=yuv420p' + draw)} "
-           f"-c:v libx264 -crf 18 -preset veryfast -pix_fmt yuv420p -an "
-           f"{shlex.quote(str(out))}")
+    import type as type_mod
+    ass = out.with_suffix(".ass")
+    type_mod.write_chapter_ass(text, ass, dur, W, H)
+    vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+          f"crop={W}:{H},setsar=1,fps={FPS},"
+          f"ass={ass.as_posix()}:fontsdir={type_mod.fontsdir()}")
+    still = out.with_suffix(".bg.jpg")
+    src = Path(bg) if bg else None
+    ok = bool(src and src.exists() and _freeze_frame(src, still, bg_start))
+    if ok:
+        cmd = (f"ffmpeg -y -loop 1 -t {dur:.3f} -r {FPS} -i {shlex.quote(str(still))} "
+               f"-vf {shlex.quote(vf)} -c:v libx264 -crf 18 -preset veryfast "
+               f"-pix_fmt yuv420p -an {shlex.quote(str(out))}")
+    else:
+        cmd = (f"ffmpeg -y -f lavfi -i color=c=black:s={W}x{H}:r={FPS}:d={dur:.3f} "
+               f"-vf {shlex.quote('format=yuv420p,' + vf)} "
+               f"-c:v libx264 -crf 18 -preset veryfast -pix_fmt yuv420p -an "
+               f"{shlex.quote(str(out))}")
     run(cmd)
-    txt_path.unlink(missing_ok=True)
+    still.unlink(missing_ok=True)
+    ass.unlink(missing_ok=True)
+
+
+def burn_ass(src: Path, ass: Path, dst: Path, fontsdir: str, crf: int = 18):
+    """
+    Второй проход ASS на уже склеенном ролике — название выпуска 1–5 с.
+
+    Не покадровый ререндер и не новый клип в начале: фильтр ass жжёт
+    стекло поверх существующих первых кадров. Перекодируется весь silent
+    одним проходом (оченьfast) — дешевле, чем резать по ключевому кадру
+    и ловить шов, дороже Remotion на порядок.
+    """
+    vf = f"ass={ass.as_posix()}:fontsdir={fontsdir}"
+    run(f"ffmpeg -y -i {shlex.quote(str(src))} -vf {shlex.quote(vf)} "
+        f"-c:v libx264 -crf {crf} -preset veryfast -pix_fmt yuv420p -an "
+        f"{shlex.quote(str(dst))}")
 
 
 def concat_segments(segments, out: Path):

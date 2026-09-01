@@ -3,34 +3,21 @@ covers.py — две обложки к готовому ролику.
 
     python pipeline/covers.py jobs/<id>.json
 
-Кладёт рядом с роликом cover_1.jpg, cover_2.jpg. Заголовок на обеих стоит
-СЛЕВА крупными белыми буквами — это постоянная канала, а меняется под ним
-фон.
-
-Откуда берётся фон
-------------------
-Оба варианта рисует xAI по промпту. Если генерация недобрала до
-COVER_COUNT (нет ключа, кончилась квота, сработал фильтр содержания) —
-недостающее закрывается кадром из самого ролика. Это страховка, а не
-третий равноправный вариант: обложка обязана появиться всегда, даже если
-генерация в этот день не отвечает, а пустая папка обложек после сорока
-минут рендера — худший исход из возможных.
+Постоянная канала: левая треть почти чёрная, белый ультражирный гротеск
+Oswald Bold, крючок 3–5 слов + короткая вторая строка с цифрой, если она
+есть. Меняется только фон. Обе рисует xAI. Кадр из ролика — не третий
+равноправный вариант, а страховка: включается, только если генерация
+недобрала до COVER_COUNT.
 
 Почему текст рисуется здесь, а не моделью
 -----------------------------------------
-Заказ был «грок умеет обложки с текстом». Умеет, но не гарантирует: модели
-регулярно путают буквы, теряют пробелы и дописывают лишние слова, и заметно
+Модель путает буквы, теряет пробелы и дописывает лишние слова, и видно
 это только на готовой картинке. Поэтому модель рисует ФОН с пустым левым
-краем, а заголовок кладётся поверх шрифтом — тогда он всегда написан
-правильно, всегда одного кегля и всегда читается на превью в ленте, где
-картинка занимает сантиметр экрана.
-
-Хотите попробовать текст самой моделью — поле cover_text_by_model в
-спецификации: тогда заголовок уходит в промпт, а поверх ничего не
-рисуется.
+краем, а заголовок кладётся поверх шрифтом канала. Поле cover_text_by_model
+больше не обходит эту отрисовку: сравнение «текст от модели» слишком легко
+оставляет в ленте нечитаемые буквы.
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -41,25 +28,27 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent))
 
 from jobspec import load_job
+import type as type_mod
 
 ROOT = Path(__file__).parent.parent
 XAI = "https://api.x.ai/v1"
 
 W, H = 1280, 720
-FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
 
-# Обложек две, не три. Раньше был третий, кадровый вариант — страховка на
-# случай, если генерация вообще не отвечает (ни ключа, ни квоты, ни фильтр
-# содержания). Он остаётся ЗАПАСНЫМ путём и добирает только то, чего не
-# хватило генерации, но целевое число теперь два: сток-кадр рядом с двумя
-# нарисованными фонами выглядит чужеродно — другая композиция, нет пустого
-# места под заголовок, и разница видна на глаз.
+# Обложек две, не три. Кадровый вариант остаётся ЗАПАСНЫМ путём и добирает
+# только то, чего не хватило генерации.
 COVER_COUNT = 2
 
 # Текст занимает левую часть кадра. 0.56 — предел, за которым заголовок
-# начинает лезть на смысловой центр картинки; проверено на трёх раскладках.
+# начинает лезть на смысловой центр картинки.
 TEXT_ZONE = 0.56
 MARGIN = 58
+
+LEFT_THIRD = (
+    "IMPORTANT: keep the LEFT THIRD of the frame dark, empty and uncluttered "
+    "— no text, no letters, no words, no watermark, no logo. The subject sits "
+    "on the RIGHT side of the frame."
+)
 
 
 def log(*a):
@@ -70,34 +59,29 @@ def art_prompts(job, n=2):
     """
     Промпты фона. Левый край СПЕЦИАЛЬНО пустой — туда ляжет заголовок.
 
-    Разные промпты, а не один и тот же дважды: две обложки с одинаковой
-    композицией не дают выбора, ради которого их и делают.
+    youtube.cover_prompts — ровно два разных сюжета. Не два ракурса одной
+    лавки: вариант A — визуальная дыра/загадка, вариант B — другой крючок
+    (крупный предмет, руки, торг). Тема из topic / глав, не универсальный
+    «antique shop».
     """
     y = job.get("youtube") or {}
+    specified = y.get("cover_prompts")
+    if isinstance(specified, list):
+        out = [str(p).strip() for p in specified if str(p).strip()]
+        if len(out) >= n:
+            return out[:n]
     topic = (job.get("topic") or {}).get("slug", "") or y.get("title", "")
-    base = ("dark moody antique shop scene, warm amber lamp light, aged wood "
-            "and brass, cinematic photography, shallow depth of field, "
-            "high contrast, 16:9 horizontal")
-    tail = ("IMPORTANT: keep the LEFT THIRD of the frame dark, empty and "
-            "uncluttered — no text, no letters, no words, no watermark, no "
-            "logo. The subject sits on the RIGHT side of the frame.")
-    variants = [
-        f"{base}, close-up of a single mysterious object on a workbench, "
-        f"subject on the right. Theme: {topic}. {tail}",
-        f"{base}, wide shot of a dim auction room with one spotlit item, "
-        f"subject on the right. Theme: {topic}. {tail}",
-        f"{base}, weathered hands holding an object under a lamp, hands on "
-        f"the right. Theme: {topic}. {tail}",
-    ]
-    if job.get("cover_text_by_model"):
-        title = y.get("title", "")
-        variants = [
-            v.replace(tail,
-                      f'Render the exact headline text "{title}" in large '
-                      f'bold white letters on the LEFT side of the frame, '
-                      f'spelled exactly as given. No other text.')
-            for v in variants]
-    return variants[:n]
+    preview = ((job.get("_превью_промпт") or {}).get("prompt") or "").strip()
+    a = preview or (
+        f"Hyperrealistic 16:9 thumbnail. Visual puzzle: an empty ornate frame "
+        f"or a silhouette with a hole in the scene, subject on the right. "
+        f"Theme: {topic}. Cinematic, high contrast. {LEFT_THIRD}")
+    b = (
+        f"Hyperrealistic 16:9 thumbnail. A different hook from an empty frame: "
+        f"one large object, hands in a deal, or a close-up artifact — not the "
+        f"same shop or gallery as the first cover. Subject on the right. "
+        f"Theme: {topic}. Cinematic, high contrast. {LEFT_THIRD}")
+    return [a, b][:n]
 
 
 def generate_art(prompt: str, dst: Path, key: str, model: str) -> bool:
@@ -126,18 +110,16 @@ def frame_from(video: Path, dst: Path, at: float) -> bool:
     return r.returncode == 0 and dst.exists() and dst.stat().st_size > 5000
 
 
-def draw_title(bg: Path, dst: Path, title: str):
+def draw_title(bg: Path, dst: Path, kicker: str, sub: str = ""):
     """
-    Заголовок крупными белыми буквами слева.
+    Крючок крупными белыми буквами слева, Oswald Bold, all-caps.
 
     Под текстом — растушёванная тень от левого края, а не плашка: плашка
-    режет картинку пополам и на превью в ленте читается как баннер. Тень
-    даёт тот же контраст и оставляет фон фоном.
+    режет картинку пополам и на превью в ленте читается как баннер.
     """
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
     im = Image.open(bg).convert("RGB").resize((W, H), Image.LANCZOS)
 
-    # затемнение слева: сильное у края, сходит на нет к центру
     shade = Image.new("L", (W, H), 0)
     sd = ImageDraw.Draw(shade)
     edge = int(W * TEXT_ZONE)
@@ -149,14 +131,16 @@ def draw_title(bg: Path, dst: Path, title: str):
 
     d = ImageDraw.Draw(im)
     box_w = int(W * TEXT_ZONE) - MARGIN * 2
+    path = str(type_mod.font_path())
+    kicker = " ".join((kicker or "").split()).upper()
+    sub = " ".join((sub or "").split()).upper()
 
-    # Кегль подбирается под длину заголовка, а не задаётся числом: короткий
-    # заголовок должен занимать кадр, длинный — влезать. Ищем самый крупный,
-    # при котором текст укладывается в четыре строки.
-    for size in range(96, 39, -4):
-        font = ImageFont.truetype(FONT_BOLD, size)
+    size = 104
+    lines = []
+    for size in range(104, 43, -4):
+        font = ImageFont.truetype(path, size)
         lines, cur = [], ""
-        for w in title.split():
+        for w in kicker.split():
             probe = (cur + " " + w).strip()
             if d.textlength(probe, font=font) > box_w and cur:
                 lines.append(cur)
@@ -165,21 +149,70 @@ def draw_title(bg: Path, dst: Path, title: str):
                 cur = probe
         if cur:
             lines.append(cur)
-        step = size + 14
-        if len(lines) <= 4 and len(lines) * step <= H - MARGIN * 2:
+        # плотный интерлиньяж: all-caps Oswald и так высокий
+        step = int(size * 1.06)
+        sub_h = int(size * 0.48) + 16 if sub else 0
+        if len(lines) <= 4 and len(lines) * step + sub_h <= H - MARGIN * 2:
             break
 
-    y = (H - len(lines) * step) // 2
+    font = ImageFont.truetype(path, size)
+    step = int(size * 1.06)
+    sub_size = max(28, int(size * 0.42))
+    sub_font = ImageFont.truetype(path, sub_size) if sub else None
+    sub_lines = []
+    if sub and sub_font:
+        cur = ""
+        for w in sub.split():
+            probe = (cur + " " + w).strip()
+            if d.textlength(probe, font=sub_font) > box_w and cur:
+                sub_lines.append(cur)
+                cur = w
+            else:
+                cur = probe
+        if cur:
+            sub_lines.append(cur)
+
+    block_h = len(lines) * step + (len(sub_lines) * int(sub_size * 1.12) + 18
+                                   if sub_lines else 0)
+    y = (H - block_h) // 2
+
+    def stamp(text, font, y, fill=(255, 255, 255)):
+        for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1)):
+            d.text((MARGIN + dx, y + dy), text, font=font, fill=(0, 0, 0))
+        d.text((MARGIN, y), text, font=font, fill=fill)
+        return y + int(font.size * 1.06)
+
     for ln in lines:
-        # мягкая обводка: белый текст на тёмном фоне всё равно теряется на
-        # светлых кадрах, а обводка держит его читаемым на любом
-        for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2)):
-            d.text((MARGIN + dx, y + dy), ln, font=font, fill=(0, 0, 0))
-        d.text((MARGIN, y), ln, font=font, fill=(255, 255, 255))
-        y += step
+        y = stamp(ln, font, y)
+    if sub_lines:
+        y += 10
+        for ln in sub_lines:
+            y = stamp(ln, sub_font, y)
 
     im.save(dst, quality=92)
     return dst
+
+
+def kicker_fits(job) -> bool:
+    """Смоук: крючок влезает в TEXT_ZONE не более чем в четыре строки."""
+    from PIL import ImageFont
+    kicker, _sub = type_mod.cover_lines(job)
+    path = str(type_mod.font_path())
+    if not Path(path).exists():
+        return False
+    box_w = int(W * TEXT_ZONE) - MARGIN * 2
+    font = ImageFont.truetype(path, 72)
+    lines, cur = [], ""
+    for w in kicker.split():
+        probe = (cur + " " + w).strip()
+        if font.getlength(probe) > box_w and cur:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = probe
+    if cur:
+        lines.append(cur)
+    return 1 <= len(lines) <= 4 and bool(kicker)
 
 
 def main(job_path):
@@ -189,8 +222,7 @@ def main(job_path):
     if not video.exists():
         raise SystemExit(f"нет {video} — сначала собери ролик")
 
-    y = job.get("youtube") or {}
-    title = y.get("title") or job["id"]
+    kicker, sub = type_mod.cover_lines(job)
     key = (os.environ.get("XAI_API_KEY") or "").strip()
     model = job.get("image_model", "grok-imagine-image")
 
@@ -213,9 +245,6 @@ def main(job_path):
     else:
         log("  ! нет XAI_API_KEY — обложки будут только из кадров ролика")
 
-    # Страховочные фоны кадрами — ТОЛЬКО если генерация недобрала до
-    # COVER_COUNT. Берутся на разных долях ролика, чтобы не быть двумя
-    # видами одной сцены.
     if len(backgrounds) < COVER_COUNT:
         log("── страховочные фоны кадрами из ролика")
         for i, frac in enumerate((0.35, 0.62, 0.18), 1):
@@ -230,21 +259,15 @@ def main(job_path):
         raise SystemExit("не вышло ни одного фона: ни генерации, ни кадра")
 
     made = []
-    by_model = bool(job.get("cover_text_by_model"))
+    log(f"── текст обложки: «{kicker}»" + (f" / «{sub}»" if sub else ""))
+    if job.get("cover_text_by_model"):
+        log("  ! cover_text_by_model игнорируется — текст рисует шрифт канала")
     for i, bg in enumerate(backgrounds[:COVER_COUNT], 1):
         dst = out / f"cover_{i}.jpg"
-        if by_model:
-            # текст уже нарисовала модель — только приводим к размеру
-            from PIL import Image
-            Image.open(bg).convert("RGB").resize((W, H),
-                                                 Image.LANCZOS).save(dst, quality=92)
-        else:
-            draw_title(bg, dst, title)
+        draw_title(bg, dst, kicker, sub)
         made.append(dst)
         log(f"  {dst.name}: {dst.stat().st_size // 1024} КБ")
 
-    # Первая обложка — она же thumbnail.jpg: у YouTube одно превью, вторая
-    # лежит рядом как вариант для ручной замены.
     main_thumb = out / "thumbnail.jpg"
     if made:
         main_thumb.write_bytes(made[0].read_bytes())

@@ -105,6 +105,12 @@
     "prompt": "Hyperrealistic 16:9 thumbnail. A dimly lit Renaissance museum gallery with an empty ornate gold frame hanging askew on a dark velvet wall, exposing bare weathered wood behind it. On the floor below sits an open antique wooden trunk with rich red silk spilling out. Atmospheric dust motes floating in dramatic golden side lighting. The LEFT THIRD of the frame is left empty, dark, unlit — reserved for large white bold text with black outline, added separately. Do NOT render any text, letters or logos in the image itself. Photorealistic, cinematic lighting, 8k, sharp focus."
   },
   "youtube": {
+    "cover_kicker": "STOLEN FROM THE LOUVRE",
+    "cover_sub": "THE $450M SECRET",
+    "cover_prompts": [
+      "Hyperrealistic 16:9 thumbnail. A dimly lit Renaissance museum gallery with an empty ornate gold frame hanging askew on a dark velvet wall, exposing bare weathered wood behind it. On the floor below sits an open antique wooden trunk with rich red silk spilling out. Atmospheric dust motes floating in dramatic golden side lighting. The LEFT THIRD of the frame is left empty, dark, unlit — reserved for large white bold text added separately. Do NOT render any text, letters or logos. Photorealistic, cinematic lighting, 8k, sharp focus.",
+      "Hyperrealistic 16:9 thumbnail. Close-up of a cracked walnut panel of Christ as Salvator Mundi on a conservator's table, one gloved hand lifting a cotton swab, auction paddle and a gavel out of focus in the background — a deal, not a gallery wall. Warm lamp light, shallow depth of field. Subject on the RIGHT. The LEFT THIRD of the frame is dark, empty, uncluttered — no text, no letters, no watermark. Photorealistic, cinematic, 8k."
+    ],
     "title": "The Stolen da Vincis: From Louvre Heists to $450 Million",
     "title_alternatives": [
       "The Billion-Dollar Lost da Vincis: Mona Lisa & Salvator Mundi",
