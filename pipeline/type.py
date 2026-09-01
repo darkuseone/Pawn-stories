@@ -37,9 +37,11 @@ OPENING_DUR = 4.6
 OPENING_FADE_IN = 0.30
 OPENING_FADE_OUT = 0.55
 
-# Кегль главы — половина названия выпуска. Оба подбираются под ширину кадра.
+# Кегль главы — как у названия выпуска (раньше была половина, на кадре
+# мелко). Оба подбираются под ширину кадра, длинное имя главы уйдёт в
+# две-три строки, а не ужмётся обратно в мелкий кегль.
 OPENING_FS = 132
-CHAPTER_FS = 66
+CHAPTER_FS = 132
 
 
 def font_path() -> Path:
@@ -272,7 +274,7 @@ def write_opening_ass(job: dict, path: Path, w: int = 1920, h: int = 1080) -> Pa
 
 def write_chapter_ass(text: str, path: Path, dur: float,
                       w: int = 1920, h: int = 1080) -> Path:
-    """Карточка главы: кегль вдвое меньше названия, fade внутри паузы."""
+    """Карточка главы: тот же кегль, что у названия выпуска, fade внутри паузы."""
     title = " ".join((text or "").split())
     fs = CHAPTER_FS
     max_w = int(w * 0.86)

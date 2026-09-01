@@ -186,7 +186,7 @@ def render_card(text: str, out: Path, dur: float, bg=None, bg_start: float = 0.0
 
     Тишина в звуке по-прежнему настоящая (build.py, voice_with_pauses).
     Картинка больше не чёрная карточка: фон — замороженный первый кадр
-    следующего шота, поверх — стекло Oswald, кегль вдвое меньше названия
+    следующего шота, поверх — стекло Oswald, кегль как у названия выпуска
     выпуска, fade in/out внутри паузы. Ken Burns сюда не ставится — у
     карточки нет ключей move/speed/framing (см. insert_chapter_cards).
 
