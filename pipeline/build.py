@@ -88,12 +88,11 @@ MAX_CLIP_REPEATS = 3
 # нужен), просто перестаёт быть предпочтением — см. over_cap в score().
 MAX_IMAGE_REPEATS = 3
 
-# Пауза перед каждой новой историей: чёрная карточка с названием главы,
-# и голос по-настоящему замолкает на это время — не наплыв поверх звука,
-# а тишина, иначе «пауза» это вопрос к монтажёру, а не к диктору. 2.6 —
-# середина заказанных «2-3 секунды»: короче читается как техническая
-# заминка, длиннее держит зрителя в неизвестности дольше, чем нужно для
-# смены темы.
+# Пауза перед каждой новой историей: голос по-настоящему замолкает на это
+# время — не наплыв поверх звука, а тишина. Картинка — первый кадр
+# СЛЕДУЮЩЕЙ истории со стеклом названия, не чёрная карточка. 2.6 — середина
+# заказанных «2-3 секунды». Первая история карточки не получает: у неё
+# название выпуска наплывом в 1–5 с поверх уже смонтированных кадров.
 CHAPTER_PAUSE = 2.6
 
 # Ходы камеры для ПОВТОРНЫХ показов клипа, см. render.FOOTAGE_MOVES. Первый
@@ -1066,6 +1065,28 @@ def insert_chapter_cards(shots, boundaries, total, pause=CHAPTER_PAUSE):
     return out, new_total
 
 
+def attach_card_backgrounds(shots):
+    """
+    Фон карточки — файл следующего не-card кадра (начало следующей истории).
+
+    Не копирует move/speed: карточка их не заводит. src_start у клипа —
+    позиция внутри исходника, её и берём как первый кадр.
+    """
+    for i, sh in enumerate(shots):
+        if sh.get("kind") != "card":
+            continue
+        for nxt in shots[i + 1:]:
+            if nxt.get("kind") == "card":
+                continue
+            src = nxt.get("file")
+            if not src:
+                continue
+            sh["card_bg"] = Path(src)
+            sh["card_bg_start"] = float(nxt.get("src_start") or 0.0)
+            break
+    return shots
+
+
 def shift_marks(marks, boundaries, pause=CHAPTER_PAUSE):
     """Тайм-коды слов на новую, раздвинутую пауза́ми шкалу времени.
 
@@ -1331,7 +1352,9 @@ def render_one(args):
     if out.exists():
         return out
     if sh["kind"] == "card":
-        render.render_card(sh["card_text"], out, sh["render_dur"])
+        render.render_card(sh["card_text"], out, sh["render_dur"],
+                           bg=sh.get("card_bg"),
+                           bg_start=float(sh.get("card_bg_start") or 0.0))
     elif sh["kind"] == "clip":
         render.render_footage_clip(Path(sh["file"]), out, sh["render_dur"],
                                    start=sh.get("src_start", 0.0),
@@ -1637,6 +1660,7 @@ def main(job_path):
     boundaries = chapter_boundaries(job, getattr(st, "beats", []), total)
     if boundaries:
         shots, total = insert_chapter_cards(shots, boundaries, total)
+        attach_card_backgrounds(shots)
         log(f"── паузы перед главами: {len(boundaries)} шт., "
             f"по {CHAPTER_PAUSE:.1f} с")
         for t, name in boundaries:
@@ -1742,6 +1766,19 @@ def main(job_path):
     log("── сшивка")
     silent = tmp / "silent.mp4"
     render.concat_segments(segs, silent)
+
+    # Название выпуска — стекло поверх УЖЕ смонтированных первых кадров,
+    # без новой тишины в начале: крючок озвучки не режем. Дешёвый второй
+    # проход ASS, не покадровый ререндер.
+    import type as type_mod
+    kicker, _sub = type_mod.cover_lines(job)
+    if kicker:
+        log(f"── название выпуска 0–{type_mod.OPENING_DUR:.1f} с: «{kicker}»")
+        opening_ass = tmp / "opening.ass"
+        type_mod.write_opening_ass(job, opening_ass, W, H)
+        titled = tmp / "silent_titled.mp4"
+        render.burn_ass(silent, opening_ass, titled, type_mod.fontsdir())
+        silent = titled
 
     log("── звук")
     mixed = tmp / "audio.m4a"

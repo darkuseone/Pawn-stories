@@ -104,6 +104,7 @@ def main(job_path):
     for path, val in (("youtube.tags", job.get("youtube", {}).get("tags")),
                       ("youtube.hashtags", job.get("youtube", {}).get("hashtags")),
                       ("youtube.chapters", job.get("youtube", {}).get("chapters")),
+                      ("youtube.cover_prompts", job.get("youtube", {}).get("cover_prompts")),
                       ("script_blocks", job.get("script_blocks")),
                       ("image_prompts", job.get("image_prompts")),
                       ("footage_queries", job.get("footage_queries")),
@@ -142,6 +143,89 @@ def main(job_path):
                              f"блоков. Ключ строкой: \"0\", \"1\", ...")
         print(f"   вопрос есть, своих по блокам: {len(per_block)}")
 
+    print("── шрифт канала и обложка")
+    import type as type_mod
+    import covers, shorts
+    if not type_mod.font_ok():
+        raise SystemExit(f"нет {type_mod.FONT_FILE} — Oswald Bold должен "
+                         f"лежать в репозитории")
+    print(f"   {type_mod.FONT_FILE.name}, libass «{type_mod.font_name()}»")
+    kicker, sub = type_mod.cover_lines(job)
+    if not kicker:
+        raise SystemExit("пустой cover_kicker — не из чего собрать превью")
+    prompts = (job.get("youtube") or {}).get("cover_prompts") or []
+    if isinstance(prompts, list) and prompts and len(prompts) != 2:
+        raise SystemExit(f"youtube.cover_prompts: {len(prompts)} шт., нужно ровно 2")
+    if job["id"] == "da-vinci-lost-millions":
+        if "LOUVRE" not in kicker:
+            raise SystemExit(f"da Vinci kicker не про Лувр: {kicker!r}")
+        if "$" not in sub and "450" not in sub:
+            raise SystemExit(f"da Vinci sub без суммы: {sub!r}")
+        if len(prompts) != 2:
+            raise SystemExit("da Vinci: нужны два cover_prompts")
+        if prompts[0] == prompts[1]:
+            raise SystemExit("da Vinci: два одинаковых сюжета обложки")
+    try:
+        if not covers.kicker_fits(job):
+            raise SystemExit(f"kicker не влезает в TEXT_ZONE: {kicker!r}")
+        print(f"   kicker «{kicker}»" + (f" / «{sub}»" if sub else "")
+              + " влезает")
+    except ImportError:
+        print("   ! нет PIL — замер kicker пропущен")
+
+    print("── окна шортсов")
+    class _B:
+        def __init__(self, start, end, block=0):
+            self.start, self.end, self.block = start, end, block
+
+    def _m(text, a, b):
+        return {"text": text, "start": a, "end": b}
+
+    frag_marks = [
+        _m("On the morning of August the museum closed for maintenance.", 0, 4),
+        _m("Here is the part most retellings leave out about the sale.", 4, 8),
+        _m("increments, breaking through two hundred million dollars.", 8, 12),
+        _m("The room erupted when the gavel fell at four hundred million.", 12, 16),
+        _m("The mystery buyer was a prince acting as a proxy.", 16, 20),
+        _m("The broken board bought for eleven hundred became the record.", 20, 24),
+        _m("That four hundred and fifty million dollars changed the market.", 24, 28),
+        _m("Nobody has seen the painting in public since that night.", 28, 32),
+    ]
+    if not shorts.is_fragment_start(frag_marks[2]["text"]):
+        raise SystemExit("increments… не распознан как обрывок")
+    w = shorts.window_for(_B(12, 16), frag_marks, 32, min_s=8, max_s=52, block_t0=0)
+    if not w:
+        raise SystemExit("window_for не собрал тестовый кусок")
+    first = frag_marks[w[2]]["text"]
+    if shorts.is_fragment_start(first) or first.lower().startswith("increments"):
+        raise SystemExit(f"шортс стартует с обрывка: {first!r}")
+    print(f"   старт «{first[:48]}…» — не обрывок")
+
+    print("── шапка ASS без жёлтого")
+    import tempfile
+    td = Path(tempfile.mkdtemp())
+    layout = shorts.header_layout("How did a glazier walk out of the Louvre?")
+    ass = shorts.build_ass([], layout, td / "q.ass")
+    body = ass.read_text(encoding="utf-8")
+    if "00D4FF" in body or "FFD400" in body:
+        raise SystemExit("в шапке шортса остался жёлтый")
+    if "\\p1" in body:
+        raise SystemExit("в шапке шортса осталась стеклянная панель")
+    if type_mod.font_name() not in body:
+        raise SystemExit("в ASS нет шрифта канала")
+    if "&H00FFFFFF" not in body:
+        raise SystemExit("шапка не белая")
+    print("   Oswald, белый, без панели")
+    opening = type_mod.write_opening_ass(job, td / "opening.ass")
+    otext = opening.read_text(encoding="utf-8")
+    if kicker.split()[0] not in otext.upper() and kicker not in otext:
+        # ASS экранирует редко; kicker без спецсимволов должен быть как есть
+        if "STOLEN" not in otext and kicker[:6] not in otext:
+            raise SystemExit("в opening.ass нет kicker")
+    if "blur" not in otext.lower() and "\\blur" not in otext:
+        raise SystemExit("в названии выпуска нет слоя стекла (blur)")
+    print("   opening.ass со стеклом")
+
     print("── план кадров")
     marks = json.loads((work / "marks.json").read_text())
     total = json.loads((work / "state.json").read_text())["total_audio"]
@@ -157,6 +241,18 @@ def main(job_path):
     build.check_luts(st)
     shots = build.plan_shots(marks, st, assets := work, total,
                              job.get("reject"), job)
+    bounds = build.chapter_boundaries(job, getattr(st, "beats", []), total)
+    if bounds:
+        shots, total = build.insert_chapter_cards(shots, bounds, total)
+        build.attach_card_backgrounds(shots)
+        cards = [s for s in shots if s.get("kind") == "card"]
+        if any("speed" in s or "move" in s for s in cards):
+            raise SystemExit("у карточки главы есть speed/move — rails.metrics "
+                             "упадёт на None")
+        missing_bg = [s["card_text"] for s in cards if not s.get("card_bg")]
+        if missing_bg:
+            raise SystemExit(f"нет фона следующей истории: {missing_bg}")
+        print(f"   {len(cards)} карточек глав, стекло на кадре следующей истории")
     build.set_render_durations(shots)
     sec, cnt, mt = build.material_report(shots)
     end = shots[-1]["start"] + shots[-1]["duration"]

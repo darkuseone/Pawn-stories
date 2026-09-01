@@ -25,10 +25,13 @@ import sys
 import unicodedata
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+
 from jobspec import load_job
+import type as type_mod
 
 W_THUMB, H_THUMB = 1280, 720
-FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
+FONT_BOLD = str(type_mod.font_path())
 FONT_PLAIN = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 TAGS_LIMIT = 500          # столько символов YouTube пускает в поле тегов
 
