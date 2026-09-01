@@ -110,8 +110,12 @@ def chapters(job, cues):
     """
     Сопоставляет блоки сценария с субтитрами и возвращает [(секунда, имя)].
 
-    Ищем по первому предложению блока: оно уникально и всегда попадает в
-    отдельную реплику, потому что субтитры режутся ровно по предложениям.
+    Ищем по первому предложению блока. Поиск обязан идти ТОЛЬКО вперёд от
+    предыдущей найденной главы: split(".")[0] режет по любой точке, включая
+    точку в сокращении вроде "Jr.", и тогда ключ ("Don Lutes Jr") — не
+    первое предложение, а обрывок имени, повторяющегося по всему сценарию.
+    Поиск с начала списка реплик находил самое первое упоминание где угодно
+    раньше по ролику, а не начало текущего блока.
     """
     names = job["youtube"]["chapters"]
     blocks = job["script_blocks"]
@@ -120,9 +124,16 @@ def chapters(job, cues):
                          "их должно быть поровну")
 
     out = []
+    search_from = 0
     for i, (block, name) in enumerate(zip(blocks, names)):
         key = norm(block.strip().split(".")[0])[:45]
-        hit = next((t for t, txt in cues if key and key in txt), None)
+        hit = None
+        for idx in range(search_from, len(cues)):
+            t, txt = cues[idx]
+            if key and key in txt:
+                hit = t
+                search_from = idx + 1
+                break
         if hit is None:
             raise SystemExit(f"глава {i+1} «{name}»: не нашёл её начало в субтитрах")
         out.append((hit, name))

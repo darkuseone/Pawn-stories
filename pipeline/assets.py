@@ -52,8 +52,22 @@ CLIP_MIN_WIDTH = 1280                   # ниже 720p не берём — за
 CLIP_MAX_WIDTH = 1920                   # выше 1080p не нужно, только вес
 
 
-def trim_long_clip(path: Path, limit: float = MAX_CLIP_SECONDS) -> None:
-    """Подрезает скачанный клип до потолка. Тихо ничего не делает, если короче."""
+# У хроники Internet Archive / Commons в начале почти всегда титр
+# «Internet Archive» / «Prelinger Archives» на несколько секунд. Если
+# резать с нуля, в ролик уезжает именно заставка, а не бытовая съёмка.
+CREDIT_SKIP = 8.0
+
+
+def trim_long_clip(path: Path, limit: float = MAX_CLIP_SECONDS,
+                   from_middle: bool = False) -> None:
+    """
+    Подрезает скачанный клип до потолка. Тихо ничего не делает, если короче
+    и резать с начала.
+
+    from_middle: берём окно из середины и пропускаем первые CREDIT_SKIP
+    секунд — для archive.org и Wikimedia, где заставка кредитов сидит
+    в начале файла.
+    """
     r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
                         "format=duration", "-of", "csv=p=0", str(path)],
                        capture_output=True, text=True)
@@ -61,19 +75,28 @@ def trim_long_clip(path: Path, limit: float = MAX_CLIP_SECONDS) -> None:
         dur = float(r.stdout.strip())
     except ValueError:
         return
-    if dur <= limit + 0.5:
+    start = 0.0
+    if from_middle and dur > CREDIT_SKIP + 4.0:
+        start = CREDIT_SKIP
+    if dur > limit + 0.5:
+        start = max(start, (dur - limit) / 2.0)
+    elif start < 0.4:
+        return
+    take = min(limit, max(0.0, dur - start))
+    if take < 2.0:
         return
     tmp = path.with_suffix(".trim.mp4")
-    # -c copy режет по ближайшему ключевому кадру: не по-кадрово точно, но
-    # для отрывка из середины стока это безразлично, зато мгновенно.
+    # -ss ДО -i + -c copy: режет по ближайшему ключевому кадру. Для
+    # отрывка из середины стока это безразлично, зато мгновенно.
     res = subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-i", str(path), "-t", f"{limit:.2f}",
+        ["ffmpeg", "-v", "error", "-y",
+         "-ss", f"{start:.2f}", "-i", str(path), "-t", f"{take:.2f}",
          "-c", "copy", "-an", str(tmp)], capture_output=True)
     if res.returncode == 0 and tmp.exists() and tmp.stat().st_size > 20000:
         was = path.stat().st_size // 1048576
         tmp.replace(path)
-        log(f"    подрезан с {dur:.0f} до {limit:.0f} с "
-            f"({was} -> {path.stat().st_size // 1048576} МБ)")
+        log(f"    подрезан с {dur:.0f} до {take:.0f} с "
+            f"(старт {start:.0f} с, {was} -> {path.stat().st_size // 1048576} МБ)")
     else:
         tmp.unlink(missing_ok=True)
 
@@ -268,18 +291,11 @@ MAGNIFIC_IMAGE_SHARE = 0.70
 MAGNIFIC_VIDEO_GEN_SHARE = 0.05
 MAGNIFIC_STOCK_DAILY_CAP = 15           # сток Magnific: видео+фото вместе, в сутки
 
-# НЕПОДТВЕРЖДЕНО. Документация канала называет движки по именам (Mystic —
-# «фирменный» движок с явным путём /v1/ai/mystic; Flux 2 Pro, Seedream
-# 4/4.5, Kling, MiniMax Hailuo, WAN и другие — только в таблице каталога,
-# без путей). Названы каналом («flux2pro», «nano-banana2», «seedream5pro»)
-# в переписке ДО того, как я увидел документацию — «seedream5pro» не
-# совпадает с «Seedream 4.5» из каталога, «nano-banana2» в каталоге не
-# упоминается вовсе. Собраны здесь как значения параметра model у Mystic
-# (тот же контракт, что и его собственный пример с model="realism") — это
-# рабочее предположение, а не факт: сверить фактические имена моделей в
-# Dashboard канала (magnific.com/developers/dashboard) перед первым платным
-# прогоном, поле легко переопределяется job["magnific_image_models"].
-MAGNIFIC_IMAGE_MODELS = ["flux2pro", "nano-banana2", "seedream5pro"]
+# Подтверждено логом API Mystic: flux2pro / nano-banana2 / seedream5pro
+# отвергнуты (400; valid: fluid, realism, zen, flexible, super_real,
+# editorial…). Крутим три рабочих имени; переопределение —
+# job["magnific_image_models"].
+MAGNIFIC_IMAGE_MODELS = ["realism", "fluid", "zen"]
 
 # Kling и MiniMax Hailuo УБРАНЫ по решению канала — не использовать, хотя
 # подписка их и даёт. Остались Seedance и WAN.
@@ -401,16 +417,16 @@ def _magnific_generated_url(data: dict):
     return None
 
 
-def images_magnific(indexed_prompts, out: Path, key):
+def images_magnific(indexed_prompts, out: Path, key, models=None):
     """
     Основной объём картинок ролика (70% по умолчанию) — здесь, через
     подписку без лимита на генерацию.
 
     Эндпойнт /v1/ai/mystic и асинхронная пара POST+GET(task_id) —
     ПОДТВЕРЖДЕНО документацией канала (Mystic — «фирменный движок»,
-    рекомендованный там же). Имена в MAGNIFIC_IMAGE_MODELS для параметра
-    model — НЕТ, см. предупреждение у константы: сверить в Dashboard перед
-    платным прогоном.
+    рекомендованный там же). Имена в MAGNIFIC_IMAGE_MODELS — realism /
+    fluid / zen: подтверждены ответом API (старые ярлыки канала для
+    Flux/Seedream в Mystic не принимаются).
 
     Три модели по кругу, а не одна: одна модель на весь объём дала бы
     ролику однородный почерк генерации, от которого и так уводит вектор
@@ -421,11 +437,12 @@ def images_magnific(indexed_prompts, out: Path, key):
     (_magnific_poll), как и советует документация в этом случае.
     """
     out.mkdir(parents=True, exist_ok=True)
+    models = list(models or MAGNIFIC_IMAGE_MODELS)
     for i, (idx, p) in enumerate(indexed_prompts):
         dst = out / f"img_{idx:03d}.jpg"
         if dst.exists():
             continue
-        model = MAGNIFIC_IMAGE_MODELS[i % len(MAGNIFIC_IMAGE_MODELS)]
+        model = models[i % len(models)]
         r = requests.post(f"{MAGNIFIC_API}/v1/ai/mystic", timeout=TIMEOUT,
                           headers=_magnific_headers(key),
                           json={"prompt": p, "model": model})
@@ -794,6 +811,21 @@ def short_query(q: str, keep: int = 2) -> str:
     return " ".join(ws[:keep]) if ws else q
 
 
+def _flat_meta(*objs) -> str:
+    """title/subject/description из ответа IA — строка или список."""
+    parts = []
+    for obj in objs:
+        if not isinstance(obj, dict):
+            continue
+        for key in ("title", "subject", "description"):
+            v = obj.get(key)
+            if isinstance(v, list):
+                parts.extend(str(x) for x in v if x)
+            elif v:
+                parts.append(str(v))
+    return " ".join(parts)
+
+
 def src_archive_org(q, n):
     """
     Хроника из archive.org/details/movies.
@@ -812,17 +844,30 @@ def src_archive_org(q, n):
                                   f'(collection:(prelinger) OR '
                                   f'collection:(publicmoviescollection) OR '
                                   f'licenseurl:(*publicdomain*))',
-                             "fl[]": "identifier", "rows": n * 2,
+                             "fl[]": ["identifier", "title", "subject"],
+                             "rows": n * 4,
                              "output": "json"})
     if not ok(r, "archive.org", q):
         return []
-    out = []
-    # не больше четырёх обращений за метаданными и по 25 секунд на каждое:
-    # это самый медленный источник, и на нём легко просидеть минуты
-    for d in r.json().get("response", {}).get("docs", [])[:4]:
+    out, dropped = [], 0
+    # не больше дюжины обращений за метаданными: это самый медленный
+    # источник, и на нём легко просидеть минуты. Кандидатов больше четырёх,
+    # потому что часть отсеется relevant() по названию.
+    for d in r.json().get("response", {}).get("docs", [])[:12]:
+        blob = _flat_meta(d)
+        if blob and not relevant(q, blob):
+            dropped += 1
+            continue
         ident = d["identifier"]
-        meta = requests.get(f"https://archive.org/metadata/{ident}",
-                            timeout=25, headers=UA).json()
+        try:
+            meta = requests.get(f"https://archive.org/metadata/{ident}",
+                                timeout=25, headers=UA).json()
+        except Exception:
+            continue
+        blob2 = _flat_meta(d, meta.get("metadata"))
+        if blob2 and not relevant(q, blob2):
+            dropped += 1
+            continue
         # Берём САМЫЙ ЛЁГКИЙ подходящий файл, а не первый попавшийся.
         # В хронике рядом с обзорной нарезкой лежит полнометражная версия
         # на несколько гигабайт, и первым в списке оказывается как повезёт.
@@ -843,6 +888,8 @@ def src_archive_org(q, n):
                 "src": "archive.org", "kind": "video"})
         if len(out) >= n:
             break
+    if dropped:
+        log(f"    archive.org «{q}»: отсеяно {dropped} не по теме")
     return out
 
 
@@ -1004,8 +1051,12 @@ def src_wikimedia_video(q, n):
                              "format": "json"})
     if not ok(r, "wikimedia_video", q):
         return []
-    out = []
+    out, dropped = [], 0
     for page in (r.json().get("query", {}).get("pages", {}) or {}).values():
+        title = page.get("title") or ""
+        if title and not relevant(q, title):
+            dropped += 1
+            continue
         ii = (page.get("imageinfo") or [{}])[0]
         lic = ((ii.get("extmetadata") or {}).get("LicenseShortName", {})
                .get("value", "")).lower()
@@ -1021,6 +1072,8 @@ def src_wikimedia_video(q, n):
         out.append({"url": url, "src": "wikimedia", "kind": "video"})
         if len(out) >= n:
             break
+    if dropped:
+        log(f"    wikimedia_video «{q}»: отсеяно {dropped} не по теме")
     return out
 
 
@@ -1267,7 +1320,9 @@ def gather(queries, per_query, sources, out: Path, kind, budget=GATHER_BUDGET):
                     # прогонами, и лишние секунды в нём — это лишние
                     # мегабайты на каждой пересборке.
                     if it["kind"] == "video":
-                        trim_long_clip(dst)
+                        src = (it.get("src") or "")
+                        trim_long_clip(
+                            dst, from_middle=src in ("archive.org", "wikimedia"))
                     # запрос сохраняется рядом с файлом: по нему build.py потом
                     # подбирает кадр под то, что звучит в эту секунду
                     got.append({"file": str(dst), "q": q, **it})
@@ -1937,14 +1992,23 @@ def main(job_path, stage="all"):
     # меняться только оттого, что функция теперь умеет больше.
     if magnific_key:
         share = float(job.get("magnific_image_share", MAGNIFIC_IMAGE_SHARE))
+        models = list(job.get("magnific_image_models") or MAGNIFIC_IMAGE_MODELS)
         p_magnific, p_xai = split_indexed(prompts, share)
         log(f"  разделение генерации: {len(p_magnific)} magnific / "
             f"{len(p_xai)} xai ({share*100:.0f}/{(1-share)*100:.0f})")
-        images_magnific(p_magnific, work / "images", magnific_key)
+        images_magnific(p_magnific, work / "images", magnific_key, models)
+        # Незакрытые слоты magnific → xAI. Иначе при 5 промптах и доле 0.7
+        # все 5 уходят в magnific (cut=7 из 10), p_xai пуст, и падение
+        # Mystic роняет весь этап 1 вместе с уже оплаченной озвучкой.
+        missing = [(i, p) for i, p in p_magnific
+                   if not (work / "images" / f"img_{i:03d}.jpg").exists()]
+        if missing:
+            log(f"  ! magnific не закрыл {len(missing)} — добираю через xAI")
+            p_xai = list(p_xai) + missing
     else:
         p_xai = list(enumerate(prompts, 1))
 
-    if job.get("batch", True):
+    if p_xai and job.get("batch", True):
         # Пакет вдвое дешевле, но он же вдвое ненадёжнее: он может
         # закрыться пустым, протухнуть или потерять файл результатов.
         # Ронять на этом ВЕСЬ прогон нельзя — озвучка к этому моменту уже
@@ -1966,7 +2030,7 @@ def main(job_path, stage="all"):
             log("  перехожу на поштучную генерацию (полная цена вместо "
                 "половинной) — иначе теряется уже оплаченная озвучка")
             images_sync(p_xai, work / "images", model, key)
-    else:
+    elif p_xai:
         images_sync(p_xai, work / "images", model, key)
 
     # ПРОВЕРКА СРАЗУ, А НЕ НА МОНТАЖЕ. Без этой строки пустая папка

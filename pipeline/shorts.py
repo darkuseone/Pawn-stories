@@ -38,8 +38,9 @@ scale+crop — см. шапку build.py), и лимит Actions в 6 часов
 делся.
 
 При этом всё, что здесь нужно, ffmpeg делает нативно: crop+scale для 9:16,
-drawbox для плашек шапки, libass для субтитров: и перенос строк, и
-центрирование многострочного текста он делает сам, одним файлом.
+libass для шапки и субтитров одним файлом — перенос строк, центрирование
+многострочного текста, чёрные плашки под строками (BorderStyle=3) и даже
+анимация вступления (\move, \t) он делает сам, без внешних инструментов.
 
 Remotion имело бы смысл, если бы понадобилась настоящая моушн-графика:
 3D-текст, сложные морфы, частицы, связанные с содержанием. Тогда это
@@ -59,17 +60,31 @@ Remotion имело бы смысл, если бы понадобилась на
 голоса — это увидели на готовом шортсе. Кусок в одну-две строки живёт
 полторы-две секунды, и та же ошибка на нём уже не читается.
 
-Шапка с вопросом — три оформления
----------------------------------
-Одна и та же белая плашка в каждой загрузке канала — такая же подпись
-конвейера, как один цветокор на все ролики. Вид выбирается жребием по id
-ролика своей лентой случайных чисел; внутри одного эпизода он общий на
-оба шортса. Подробности — у HEADER_STYLES.
+Шапка с вопросом — два оформления на жребии
+--------------------------------------------
+Одна полупрозрачная скруглённая панель под ВЕСЬ вопрос (не коробка на
+каждую строку) рисуется самим libass в режиме векторного рисования
+(\p1) — отдельного прохода ffmpeg или overlay-слоя не нужно. Вид —
+"glass" (тёмное стекло, тонкий светлый кант) или "soft" (без канта,
+только мягкое размытое пятно) — выбирается жребием по id ролика своей
+лентой случайных чисел (смещение +307, как у подложки +101 и эффектов
++211): правка оформления шапки не должна сдвигать цветокор, переходы
+и движения камеры уже собранных роликов. Вид один на оба шортса
+эпизода — разводятся РОЛИКИ, а не куски одного ролика. Подробности —
+у STYLE_PARAMS и header_layout().
+
+Вступление шортса — крупный вопрос по центру кадра, который через
+0.9-1.55 с уменьшается и уезжает в свою постоянную позицию сверху
+(INTRO_HOLD, INTRO_SHRINK). Анимацию считает libass прямо внутри ASS-
+файла — \\move двигает позицию, \\t уменьшает кегль — в одном событии,
+без отдельного видео-прохода: overlay поверх видео или покадровый
+рендер (Remotion/HyperFrames) понадобились бы только для
+морфов и частиц, а линейное уменьшение с переездом — ровно то, что
+libass умеет из коробки, за секунды, а не минуты.
 """
 
 import json
 import random
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -92,9 +107,9 @@ FPS = 30
 SHORT_MIN = 24.0
 SHORT_MAX = 52.0
 
-# Шапка с вопросом: 20% высоты кадра, как заказано.
-BOX_SHARE = 0.20
-BOX_MARGIN = 36            # отступ рамки от краёв кадра
+# Шапка с вопросом: плашки жмутся к тексту (см. header_layout), но
+# начинаются с этого отступа от края кадра.
+BOX_MARGIN = 36
 
 # Субтитры кусками фразы, а не по одному слову.
 SUB_MAX_CHARS = 20
@@ -113,37 +128,68 @@ SUB_MARGIN = 60            # поля стиля SUB, они же предел �
 # (заголовок и кнопки), а слишком высокий субтитр лезет к шапке с вопросом.
 SUB_Y = 0.66
 
-FONT = "DejaVu Sans"
-# Файлы того же шрифта — нужны, чтобы МЕРИТЬ ширину строки перед рендером,
-# см. fit_size(). libass берёт шрифт по имени, PIL — только по файлу.
+FONT = "Liberation Sans"
+# Единый фирменный шрифт канала — и в шапке, и в субтитрах, один и тот же
+# в каждой загрузке. Выбран не за оригинальность, а за надёжность: качать
+# веб-шрифт по URL в конвейере не с чего (нет подтверждённой ссылки и
+# нет смысла гадать домен), а Liberation Sans Bold уже был в этом списке
+# файлов — нужен для измерения ширины строки, см. fit_size() — и, значит,
+# уже проверено, что он есть на раннере GitHub Actions без новых
+# зависимостей. Порядок важен: fit_size() меряет ПЕРВЫМ существующим
+# файлом, он должен быть тем же шрифтом, что рисует ass.
 FONT_FILES = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
 ]
 
 # ─────────────────── ОФОРМЛЕНИЕ ШАПКИ ───────────────────
 #
-# Три вида вместо одной белой плашки на все ролики канала. Вопрос — то,
-# ради чего шортс досматривают, и если он выглядит одинаково в каждой
-# загрузке, это такая же подпись конвейера, как один цветокор на всё.
+# Два вида панели на жребии (см. header_style_for) — обе полупрозрачные и
+# скруглённые, отличаются только тем, есть ли у панели кант и насколько
+# она держит форму. Раньше здесь были плотные чёрные плашки-коробки на
+# каждую строку — по отзыву выглядело дёшево; отрисовано и сравнено на
+# настоящем кадре канала в docs/shorts-header, выбраны эти два варианта
+# из четырёх показанных.
 #
-# Выбор идёт СВОЕЙ лентой случайных чисел (смещение +307), как у подложки
-# (+101) и эффектов (+211): правка оформления шапки не должна сдвигать ни
-# цветокор, ни переходы, ни движения камеры уже собранных роликов.
-#
-# Вид один на оба шортса эпизода: внутри одной загрузки оформление —
-# постоянная, разводятся между собой РОЛИКИ, а не куски одного ролика.
-HEADER_STYLES = ("paper", "night", "clean")
+# HEADER_YELLOW_ASS общий на оба стиля и на вступление (см. ниже) — цвет
+# шапки узнаётся с первого кадра независимо от того, какой из двух видов
+# панели выпал.
+HEADER_YELLOW_ASS = "&H0000D4FF"   # #FFD400, ASS-порядок &HAABBGGRR
 
-# Цвета. ASS читает &HAABBGGRR (порядок байт обратный привычному RGB),
-# ffmpeg drawbox — 0xRRGGBB@прозрачность. Одни и те же цвета записаны
-# дважды в разных порядках именно поэтому, а не по недосмотру.
-CREAM_ASS = "&H00D8EAF2"       # #F2EAD8
-BROWN_ASS = "&H00161F2A"       # #2A1F16
-GOLD_BOX = "0xC9A227"
-PAPER_BOX = "0xF2EAD8"
-NIGHT_BOX = "0x120E0A"
+# Параметры панели — БЕЗ ведущего &H и без & на конце: это голые байты
+# ASS-тэгов \1c/\1a/\3c/\3a, собираются в build_ass() форматированием.
+STYLE_PARAMS = {
+    # A — стекло: тёмная полупрозрачная панель с тонким светлым кантом
+    # и мягкой тенью. Текст не нуждается в собственной обводке — контраст
+    # даёт панель.
+    "glass": dict(
+        pad_x=46, pad_y=34, radius=30,
+        panel_fill="141110", panel_alpha="4A",
+        border_colour="E8F4FF", border_alpha="B4", bord=2, blur="0.6",
+        shadow_alpha="96", shadow_blur=14, shadow_dy=6,
+        text_outline=0,
+    ),
+    # C — без рамки: канта нет вовсе, только размытое тёмное пятно под
+    # буквами. Тексту здесь нужна собственная тонкая обводка — без канта
+    # панели больше не за что зацепиться взглядом.
+    "soft": dict(
+        pad_x=60, pad_y=44, radius=60,
+        panel_fill="0A0806", panel_alpha="55",
+        border_colour=None, border_alpha=None, bord=0, blur="26",
+        shadow_alpha=None, shadow_blur=0, shadow_dy=0,
+        text_outline=3,
+    ),
+}
+HEADER_STYLES = tuple(STYLE_PARAMS)
+
+# Вступление: крупный вопрос по центру кадра — держится, потом уезжает и
+# уменьшается в постоянную шапку сверху. 0.9 с держим — время, за которое
+# читается короткая фраза; 0.65 с едет и сжимается. Длиннее держать —
+# тратить темп открытия шортса впустую, короче — вопрос крупным планом не
+# успеет прочитаться.
+INTRO_HOLD = 0.9
+INTRO_SHRINK = 0.65
 
 
 def log(*a):
@@ -385,79 +431,137 @@ def wrap(text: str, per_line: int):
     return lines
 
 
+def fallback_question(job) -> str:
+    """
+    Вопрос для шапки, когда в спецификации нет open_loop вовсе.
+
+    ШАПКА ОБЯЗАНА БЫТЬ В КАЖДОМ ШОРТСЕ. Раньше отсутствие open_loop
+    молча давало шортс без единой надписи сверху — а заодно и без
+    вступления, потому что крупный вопрос и постоянная шапка это одно
+    и то же событие ASS. Ровно так вышел ff-ep08: спецификацию прислали
+    без open_loop, прогон честно написал предупреждение в лог, и оба
+    шортса уехали к человеку голыми. Предупреждение в логе — не защита:
+    его никто не читает на успешном прогоне.
+
+    Заголовок ролика — не идеальная замена (он утверждение, а не
+    вопрос), но он ХУК канала, ради которого ролик открывают, и в шапке
+    работает. Дальше по убыванию: текст с обложки, имя главы. Пустой
+    ответ здесь означал бы, что в спецификации нет ни заголовка, ни
+    глав — такую в конвейер не пускает smoke.py.
+    """
+    y = job.get("youtube") or {}
+    title = (y.get("title") or "").strip()
+    if title:
+        return title
+    overlay = ((job.get("_превью_промпт") or {}).get("overlay_text") or "").strip()
+    if overlay:
+        return overlay
+    chapters = y.get("chapters") or []
+    return str(chapters[0]).strip() if chapters else ""
+
+
 def header_style_for(job) -> str:
-    """Оформление шапки — жребием по id ролика, своей лентой (см. HEADER_STYLES)."""
+    """Оформление панели — жребием по id ролика, своей лентой (см. HEADER_STYLES)."""
     forced = (job.get("open_loop") or {}).get("header_style")
     if forced in HEADER_STYLES:
         return forced
     return random.Random(seed_from(job["id"]) + 307).choice(HEADER_STYLES)
 
 
+def measure_width(lines, size: int) -> float:
+    """Ширина самой широкой строки настоящим шрифтом — для размера панели."""
+    try:
+        from PIL import ImageFont
+    except ImportError:
+        return max(len(l) for l in lines) * size * 0.56
+    path = next((p for p in FONT_FILES if Path(p).exists()), None)
+    if not path:
+        return max(len(l) for l in lines) * size * 0.56
+    f = ImageFont.truetype(path, size)
+    return max(f.getlength(l) for l in lines)
+
+
+def rrect(w: float, h: float, r: float) -> str:
+    """
+    Скруглённый прямоугольник в режиме рисования ASS (\\p1), угол (0,0).
+
+    ffmpeg drawbox скруглять углы не умеет вовсе — отсюда раньше и были
+    плотные прямоугольные коробки. libass же рисует произвольные фигуры
+    через move/line/bezier, и скруглённая панель — четыре прямые стороны
+    плюс четыре четвертные безье в углах, без единого внешнего файла.
+    """
+    w, h, r = round(w), round(h), round(r)
+    return (f"m {r} 0 l {w - r} 0 b {w} 0 {w} 0 {w} {r} "
+            f"l {w} {h - r} b {w} {h} {w} {h} {w - r} {h} "
+            f"l {r} {h} b 0 {h} 0 {h} 0 {h - r} "
+            f"l 0 {r} b 0 0 0 0 {r} 0")
+
+
 def header_layout(question: str, style: str) -> dict:
     """
-    Геометрия шапки: где плашки, где текст, каким кеглем.
+    Геометрия шапки: одна полупрозрачная скруглённая панель под весь
+    вопрос + параметры вступления — крупный вопрос по центру кадра,
+    уезжающий и уменьшающийся в свою постоянную позицию за
+    INTRO_HOLD+INTRO_SHRINK секунд.
 
-    Считается В ОДНОМ месте, потому что плашки рисует ffmpeg (drawbox), а
-    текст — libass, и разъехаться они не должны. Раньше высота плашки
-    жила в render_short, а положение текста — в build_ass, и любая правка
-    одного требовала помнить про другое.
+    Панель — НЕ автобокс (как раньше BorderStyle=3), а рисуется вручную
+    через rrect(), поэтому размер меряется здесь самостоятельно, той же
+    PIL-логикой, что и fit_size().
 
-    Пустой вопрос — пустой макет: ни плашек, ни текста. Пустая белая
-    коробка без букв занимает 20% кадра и не сообщает ничего, это уже
-    ловили на готовом шортсе.
+    Пустой вопрос — пустой макет целиком, ни панели, ни вступления: без
+    него десять секунд провисела бы пустая анимация без единой буквы —
+    это уже ловили на готовом шортсе с прежней белой коробкой.
     """
     lines = wrap(question.strip(), 24) if question else []
     if not lines:
-        return dict(lines=[], boxes=[], size=0, cx=W // 2, cy=0,
-                    colour=CREAM_ASS, outline=0, shadow=0,
-                    outline_colour="&H00000000")
+        return dict(lines=[], size=0, big_size=0, cx=W // 2, big_cy=0,
+                    block_cy=0, panel=None, pct=100, style=style)
 
-    box_h = int(H * BOX_SHARE)
+    sp = STYLE_PARAMS[style]
     size = 66 if len(lines) <= 2 else (56 if len(lines) == 3 else 46)
-    # и всё равно меряем: длинное слово в вопросе вылезет за плашку
-    size = fit_size(lines, W - 2 * BOX_MARGIN - 60, size, floor=34)
-    cy = BOX_MARGIN + box_h // 2
-    x, w = BOX_MARGIN, W - 2 * BOX_MARGIN
-    # низ текстового блока — от него отбивается золотая линейка
-    rule_y = cy + int(len(lines) * size * 1.22) // 2 + 16
-    rule_w = min(w - 80, 240)
+    size = fit_size(lines, W - 2 * BOX_MARGIN - 2 * sp["pad_x"], size, floor=34)
 
-    if style == "paper":
-        # тёплая бумага: тёмные буквы на кремовом, золотая линейка под текстом
-        return dict(
-            lines=lines, size=size, cx=W // 2, cy=cy,
-            colour=BROWN_ASS, outline_colour=BROWN_ASS, outline=0, shadow=0,
-            boxes=[(x, BOX_MARGIN, w, box_h, f"{PAPER_BOX}@0.96", "fill"),
-                   ((W - rule_w) // 2, rule_y, rule_w, 6, f"{GOLD_BOX}@0.95", "fill")])
+    tw = measure_width(lines, size)
+    line_h = size * 1.30
+    pw = tw + 2 * sp["pad_x"]
+    ph = line_h * len(lines) + 2 * sp["pad_y"]
+    x = (W - pw) / 2
+    y = BOX_MARGIN
+    block_cy = y + ph / 2
 
-    if style == "night":
-        # тёмная плашка под цветокор канала, золотой брусок слева
-        return dict(
-            lines=lines, size=size, cx=W // 2 + 8, cy=cy,
-            colour=CREAM_ASS, outline_colour="&H00000000", outline=2, shadow=1,
-            boxes=[(x, BOX_MARGIN, w, box_h, f"{NIGHT_BOX}@0.80", "fill"),
-                   (x, BOX_MARGIN, 12, box_h, f"{GOLD_BOX}@0.95", "fill")])
+    # Крупный вопрос вступления — минимум на 14pt больше итогового кегля,
+    # иначе на длинном вопросе fit_size ужмёт его почти до того же
+    # размера, и уменьшение на экране не будет заметно вовсе.
+    big_size = fit_size(lines, W - 2 * BOX_MARGIN, int(size * 1.9), floor=size + 14)
+    pct = round(size / big_size * 100)
 
-    # clean: плашки нет вовсе, буквы прямо на кадре с толстой обводкой
-    return dict(
-        lines=lines, size=size + 4, cx=W // 2, cy=cy,
-        colour=CREAM_ASS, outline_colour="&H00000000", outline=7, shadow=4,
-        boxes=[((W - rule_w) // 2, rule_y, rule_w, 7, f"{GOLD_BOX}@0.95", "fill")])
+    return dict(lines=lines, size=size, big_size=big_size, cx=W // 2,
+                big_cy=H * 0.46, block_cy=block_cy, pct=pct, style=style,
+                panel=dict(x=x, y=y, w=pw, h=ph, r=sp["radius"]))
 
 
 def build_ass(subs, layout: dict, out: Path):
     """
-    Файл субтитров: вопрос в шапке на весь кусок + субтитры кусками фразы.
+    Файл субтитров: вступление с крупным вопросом, полупрозрачная
+    скруглённая панель под тем же вопросом на весь шортс, и субтитры
+    кусками фразы.
 
-    Оба слоя здесь, а не в drawtext, по одной причине: drawtext не умеет
-    ни переносить строки, ни центрировать многострочный текст, и каждый
-    кусок в нём — отдельный фильтр в цепочке. libass берёт то же самое
-    одним файлом.
+    Всё — включая панель и анимацию вступления — рисует один и тот же
+    ass-фильтр ffmpeg, без отдельного прохода или overlay-слоя поверх
+    видео. Панель — векторная фигура (\\p1, см. rrect()) с тенью и
+    кантом через \\1a/\\3c/\\3a/\\blur, библиотека рисует и заливку, и
+    полупрозрачность, и скругление сама. Для вступления — стандартные
+    для ASS \\move (позиция едет от t1 до t2) и \\t (кегль через
+    \\fscx/\\fscy едет туда же) внутри ОДНОГО события: видео-движок
+    вроде Remotion нужен был бы для морфов и частиц, а настоящее
+    уменьшение текста с переездом — то, что ASS/libass умеет из коробки.
 
-    Вопрос ПРОЯВЛЯЕТСЯ за треть секунды (\\fad), а не возникает рывком на
-    первом кадре: рывок читается как склейка, наплыв — как приём.
+    Вступление ПЕРЕКРЫВАЕТ по времени субтитры снизу — это нормально:
+    экраны разные, крупный вопрос сверху и по центру первые секунды,
+    реплика внизу — с самого начала куска, как обычно.
     """
     q_size = layout["size"] or 1
+    sp = STYLE_PARAMS.get(layout.get("style"), STYLE_PARAMS["glass"])
     # Кегль субтитров — по самой широкой строке ВСЕГО куска, а не по каждой
     # отдельно: прыгающий от реплики к реплике размер читается как брак.
     all_lines = [l for _, _, c in subs for l in wrap(c, SUB_MAX_CHARS)]
@@ -471,7 +575,9 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Q,{FONT},{q_size},{layout['colour']},{layout['outline_colour']},&H00000000,-1,0,0,0,100,100,0,0,1,{layout['outline']},{layout['shadow']},5,40,40,40,1
+Style: QBIG,{FONT},{layout['big_size']},{HEADER_YELLOW_ASS},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,7,4,5,40,40,40,1
+Style: Q,{FONT},{q_size},{HEADER_YELLOW_ASS},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,{sp['text_outline']},0,5,40,40,40,1
+Style: PANEL,{FONT},60,&H00FFFFFF,&H00FFFFFF,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: SUB,{FONT},{sub_size},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,1,0,1,6,3,5,{SUB_MARGIN},{SUB_MARGIN},60,1
 
 [Events]
@@ -479,10 +585,37 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     rows = []
     if layout["lines"]:
+        hold_ms = round(INTRO_HOLD * 1000)
+        intro_ms = round((INTRO_HOLD + INTRO_SHRINK) * 1000)
+        text = "\\N".join(ass_escape(l) for l in layout["lines"])
         rows.append(
-            f"Dialogue: 0,{ass_time(0)},{ass_time(99999)},Q,,0,0,0,,"
-            f"{{\\pos({layout['cx']},{layout['cy']})\\fad(320,0)}}"
-            + "\\N".join(ass_escape(l) for l in layout["lines"]))
+            f"Dialogue: 0,{ass_time(0)},{ass_time(intro_ms / 1000)},QBIG,,0,0,0,,"
+            f"{{\\an5\\move({layout['cx']},{layout['big_cy']:.0f},"
+            f"{layout['cx']},{layout['block_cy']:.0f},{hold_ms},{intro_ms})"
+            f"\\t({hold_ms},{intro_ms},\\fscx{layout['pct']}\\fscy{layout['pct']})"
+            f"\\fad(150,150)}}" + text)
+
+        p = layout["panel"]
+        path = rrect(p["w"], p["h"], p["r"])
+        start = ass_time(intro_ms / 1000)
+        if sp["shadow_alpha"]:
+            rows.append(
+                f"Dialogue: 0,{start},{ass_time(99999)},PANEL,,0,0,0,,"
+                f"{{\\pos({p['x']:.0f},{p['y'] + sp['shadow_dy']:.0f})"
+                f"\\1c&H000000&\\1a&H{sp['shadow_alpha']}&\\bord0"
+                f"\\blur{sp['shadow_blur']}\\p1}}{path}{{\\p0}}")
+        border = ""
+        if sp["border_colour"]:
+            border = (f"\\bord{sp['bord']}\\3c&H{sp['border_colour']}&"
+                      f"\\3a&H{sp['border_alpha']}&")
+        rows.append(
+            f"Dialogue: 1,{start},{ass_time(99999)},PANEL,,0,0,0,,"
+            f"{{\\pos({p['x']:.0f},{p['y']:.0f})\\1c&H{sp['panel_fill']}&"
+            f"\\1a&H{sp['panel_alpha']}&{border}\\blur{sp['blur']}\\p1}}"
+            f"{path}{{\\p0}}")
+        rows.append(
+            f"Dialogue: 2,{start},{ass_time(99999)},Q,,0,0,0,,"
+            f"{{\\an5\\pos({W // 2},{layout['block_cy']:.0f})}}" + text)
     for s, e, c in subs:
         rows.append(
             f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
@@ -495,7 +628,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 # ─────────────────────── РЕНДЕР ───────────────────────
 
 def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
-                 crf: int = 20, boxes=None):
+                 crf: int = 20):
     """
     Вырезает кусок, разворачивает в 9:16 и накладывает шапку и субтитры.
 
@@ -508,20 +641,21 @@ def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
     декодирует всё от начала файла. На получасовом ролике разница — секунды
     против минут.
 
-    boxes приходят ГОТОВЫМИ из header_layout() — здесь не решается, что
-    рисовать. Пустой список значит «шапки нет вовсе»: без вопроса в кадре
-    когда-то повисала пустая белая коробка без единой буквы, а она занимает
-    20% кадра и не сообщает ничего.
+    Плашки шапки больше не рисует ffmpeg (drawbox) — их кладёт сам libass
+    через ass-фильтр (BorderStyle=3, см. build_ass), поэтому здесь только
+    кадрирование, масштаб и один слой субтитров.
     """
-    # 1080 * 9/16 = 607.5; libx264 требует чётные размеры, берём 608
+    # 1080 * 9/16 = 607.5; libx264 требует чётные размеры, берём 608.
+    # hqdn3d ПОСЛЕ crop, ДО scale: в final.mp4 уже запечены движение камеры
+    # и temporal grain/искры. Вертикальный кроп оставляет треть ширины и
+    # усиливает горизонтальный дрейф втрое, а зерно после апскейла читается
+    # как вторая тряска. deshake/vidstab сюда нельзя — они борются с
+    # запечённым Ken Burns и качают сами.
     crop_w = 608
-    box = "".join(
-        f"drawbox=x={x}:y={y}:w={w}:h={h}:color={c}:t={t},"
-        for x, y, w, h, c, t in (boxes or []))
     vf = (
         f"crop={crop_w}:1080:(iw-{crop_w})/2:0,"
+        f"hqdn3d=1.2:1.2:3:3,"
         f"scale={W}:{H}:flags=lanczos,setsar=1,"
-        f"{box}"
         f"ass={ass.as_posix()}"
     )
     run(["ffmpeg", "-v", "error", "-y",
@@ -609,10 +743,14 @@ def main(job_path, want=2):
     per_block = {str(k): v.strip() for k, v in (loop.get("questions") or {}).items()
                 if v and v.strip()}
     if not default_question and not per_block:
-        # Не падаем: шортс без шапки — рабочий шортс. Но молчать нельзя,
-        # вопрос в шапке это и есть причина досмотреть.
-        log("  ! в спецификации нет open_loop.question — шортсы будут без "
-            "шапки с вопросом, а она и держит зрителя")
+        # НЕ оставляем шортс без шапки. Раньше здесь была только строчка в
+        # лог — и ff-ep08 уехал с двумя голыми шортсами: ни вопроса сверху,
+        # ни вступления (это одно событие ASS). Предупреждение на успешном
+        # прогоне никто не читает, поэтому берём запасной вопрос.
+        default_question = fallback_question(job)
+        log(f"  ! в спецификации нет open_loop — шапка взята из заголовка "
+            f"ролика: «{default_question}». Свой вопрос под каждый шортс "
+            f"задаётся в open_loop.questions и почти всегда лучше")
 
     log("── разбор сценария на доли")
     bts = beats_mod.analyze(marks, job["script_blocks"], total)
@@ -649,8 +787,7 @@ def main(job_path, want=2):
             f"доля «{beat.kind}», блок {beat.block}, субтитров {len(subs)}, "
             f"вопрос: {question or '(нет)'}")
         render_short(final, t0, t1, ass, dst,
-                     crf=int((job.get("style_override") or {}).get("crf", 20)),
-                     boxes=layout["boxes"])
+                     crf=int((job.get("style_override") or {}).get("crf", 20)))
         got = duration_of(dst)
         if got > 60.5:
             log(f"  ! {got:.1f} с — длиннее 60, YouTube не примет как Shorts")

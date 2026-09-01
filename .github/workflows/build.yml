@@ -6,14 +6,19 @@ on:
       job:
         description: 'Имя файла в jobs/ без .json'
         required: true
-        default: 'auction-01'
+        default: 'garage-sale-millions-ming-durer-faberge'
       stage:
         description: 'material / vet / assets / render / post / shorts / auto'
         required: true
         default: 'auto'
-
-# Триггера на push здесь намеренно нет. С несколькими спецификациями в
-# репозитории правка любой из них запускала бы полную сборку не того ролика.
+  # Автозапуск:
+  #   • новый jobs/*.json (git A) → stage auto
+  #   • файл .github/rebuild/<job> → принудительный перезапуск этого job
+  # Правки существующих jobs (reject/queries) полный auto НЕ жгут.
+  push:
+    paths:
+      - 'jobs/*.json'
+      - '.github/rebuild/**'
 
 permissions:
   contents: write
@@ -24,33 +29,94 @@ jobs:
     timeout-minutes: 330      # лимит GitHub 360, оставляем запас на выкладку
 
     steps:
+      # fetch-depth 0: на push нужен before..sha, чтобы увидеть diff-filter=A.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      # Нужен до шага pick: там читаем id из JSON. На skip всё равно дёшево.
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Ставим FFmpeg и библиотеки
-        run: |
-          set -e
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
-          python -m pip install --upgrade pip --quiet
-          python -m pip install --quiet pillow requests numpy
-          fc-list | grep -qi dejavu || sudo apt-get install -y -qq fonts-dejavu
-          echo "ffmpeg: $(ffmpeg -version | head -1)"
 
       - name: Какой ролик собираем
         id: pick
         run: |
           set -e
-          JOB="${{ github.event.inputs.job }}"
-          STAGE="${{ github.event.inputs.stage }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            BEFORE="${{ github.event.before }}"
+            # Новый бранч / force-push: before — нули, сравниваем с родителем.
+            if [ -z "$BEFORE" ] || echo "$BEFORE" | grep -qE '^0+$'; then
+              BEFORE="$(git rev-parse 'HEAD^' 2>/dev/null || true)"
+            fi
+            JOB=""
+            STAGE=auto
+            # 1) Явный перезапуск: .github/rebuild/<job>
+            #    Имя файла = id джоба без .json. README/мусор игнорируем —
+            #    берём только то, для чего есть jobs/<name>.json.
+            REBUILD=""
+            if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
+              while IFS= read -r f; do
+                [ -z "$f" ] && continue
+                j=$(basename "$f")
+                case "$j" in
+                  README.md|README|.gitkeep) continue ;;
+                esac
+                if [ -f "jobs/$j.json" ]; then
+                  REBUILD=$j
+                  break
+                fi
+              done < <(git diff --name-only "$BEFORE" "${{ github.sha }}" -- '.github/rebuild/' || true)
+            fi
+            if [ -n "$REBUILD" ]; then
+              JOB="$REBUILD"
+              # Содержимое файла — стадия. Пустой или мусор → auto, как
+              # раньше. Иначе нельзя запустить shorts/material/render
+              # без workflow_dispatch.
+              raw=$(tr -d '[:space:]' < ".github/rebuild/$JOB" 2>/dev/null || true)
+              case "$raw" in
+                material|vet|assets|render|post|shorts|auto) STAGE=$raw ;;
+                *) STAGE=auto ;;
+              esac
+              echo "Принудительный перезапуск: .github/rebuild/$JOB (stage: $STAGE)"
+            else
+              ADDED=""
+              if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
+                ADDED=$(git diff --diff-filter=A --name-only "$BEFORE" "${{ github.sha }}" -- 'jobs/*.json' \
+                  | grep -vE '\.example\.json$|^jobs/_' \
+                  | grep -vE '^jobs/auction-test\.json$' \
+                  || true)
+              fi
+              if [ -n "$ADDED" ]; then
+                # Несколько новых файлов за один push — берём первый.
+                JOB=$(basename "$(echo "$ADDED" | head -1)" .json)
+                echo "Автозапуск по новому файлу: jobs/$JOB.json"
+              fi
+            fi
+            if [ -z "$JOB" ]; then
+              echo "push без нового job и без .github/rebuild — полный auto не запускаю"
+              echo "skip=true" >> $GITHUB_OUTPUT
+              echo "job=" >> $GITHUB_OUTPUT
+              echo "stage=auto" >> $GITHUB_OUTPUT
+              echo "id=" >> $GITHUB_OUTPUT
+              echo "do_assets=false" >> $GITHUB_OUTPUT
+              echo "do_build=false" >> $GITHUB_OUTPUT
+              echo "do_pack=false" >> $GITHUB_OUTPUT
+              echo "do_shorts=false" >> $GITHUB_OUTPUT
+              echo "from_release=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          else
+            JOB="${{ github.event.inputs.job }}"
+            STAGE="${{ github.event.inputs.stage }}"
+          fi
+          test -n "$JOB" || { echo "Пустой job"; exit 1; }
           test -f "jobs/$JOB.json" || { echo "Нет файла jobs/$JOB.json"; exit 1; }
           # Папка работ называется по полю id ВНУТРИ спецификации, а не по
           # имени файла: они могут не совпадать, и тогда кэш и выкладка
           # смотрят в несуществующую папку.
           ID=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['id'])" "jobs/$JOB.json")
+          echo "skip=false"   >> $GITHUB_OUTPUT
           echo "job=$JOB"     >> $GITHUB_OUTPUT
           echo "stage=$STAGE" >> $GITHUB_OUTPUT
           echo "id=$ID"       >> $GITHUB_OUTPUT
@@ -66,6 +132,13 @@ jobs:
           #   pack    — обложки и комплект для YouTube
           #   shorts  — вертикальные шортсы из готового final.mp4
           #   fromrel — final.mp4 берём из релиза, а не собираем
+          # НЕИЗВЕСТНАЯ СТАДИЯ РОНЯЕТ ПРОГОН, а не запускает полную сборку.
+          # Раньше здесь стояло «*) полный прогон», и это дорого стоило:
+          # запуск, у которого stage не доехал (dispatch вернул HTTP 500),
+          # попал в эту ветку и час молотил сборку целиком — озвучку,
+          # генерацию и монтаж, — вместо двухминутной нарезки шортсов,
+          # которую заказывали. Опечатка в имени стадии обходилась бы так же.
+          # Полный прогон теперь только по явному auto.
           A=false; B=false; P=false; S=false; R=false
           case "$STAGE" in
             material|vet) ;;
@@ -73,7 +146,13 @@ jobs:
             render)  B=true; P=true; S=true ;;
             post)    P=true; S=true; R=true ;;
             shorts)  S=true; R=true ;;
-            *)       A=true; B=true; P=true; S=true ;;
+            auto)    A=true; B=true; P=true; S=true ;;
+            *)
+              echo "Неизвестная стадия: «$STAGE»"
+              echo "Ожидается одна из: material, vet, assets, render, post, shorts, auto"
+              echo "Полная сборка запускается ТОЛЬКО по явному auto — молча"
+              echo "тратить час раннера на непонятное значение неправильно."
+              exit 1 ;;
           esac
           echo "do_assets=$A"  >> $GITHUB_OUTPUT
           echo "do_build=$B"   >> $GITHUB_OUTPUT
@@ -83,7 +162,20 @@ jobs:
           echo "Собираю: $JOB (папка work/$ID), этап: $STAGE"
           echo "  материал=$A монтаж=$B упаковка=$P шортсы=$S из-релиза=$R"
 
+      - name: Ставим FFmpeg и библиотеки
+        if: steps.pick.outputs.skip != 'true'
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg tesseract-ocr
+          python -m pip install --upgrade pip --quiet
+          python -m pip install --quiet pillow requests numpy
+          fc-list | grep -qi dejavu || sudo apt-get install -y -qq fonts-dejavu
+          fc-list | grep -qi "liberation sans" || sudo apt-get install -y -qq fonts-liberation
+          echo "ffmpeg: $(ffmpeg -version | head -1)"
+
       - name: Проверка секретов
+        if: steps.pick.outputs.skip != 'true'
         env:
           XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
@@ -151,12 +243,30 @@ jobs:
       # Ключ уникален на запуск, восстановление по префиксу берёт самую
       # свежую запись. С постоянным ключом cache не сохраняет ничего.
       - name: Достаём материалы из кэша
+        if: steps.pick.outputs.skip != 'true'
         uses: actions/cache/restore@v4
         with:
           path: work/${{ steps.pick.outputs.id }}/assets
           key: assets-${{ steps.pick.outputs.id }}-v1-${{ github.run_id }}
           restore-keys: |
             assets-${{ steps.pick.outputs.id }}-v1-
+
+      # material/vet/render не заказывают озвучку заново. Если кэш не
+      # поднялся, папка пустая: material скачает только футаж и запишет
+      # его новым ключом — следующий render потеряет оплаченный голос.
+      - name: Озвучка из кэша на месте
+        if: steps.pick.outputs.skip != 'true' && (steps.pick.outputs.stage == 'material' || steps.pick.outputs.stage == 'vet' || steps.pick.outputs.do_build == 'true')
+        run: |
+          set -e
+          VOICE="work/${{ steps.pick.outputs.id }}/assets/voice_full.m4a"
+          test -f "$VOICE" || {
+            echo "нет $VOICE — кэш assets-${{ steps.pick.outputs.id }}-v1- не поднялся"
+            echo "без озвучки material/vet/render запускать нельзя: следующий"
+            echo "прогон затёр бы оплаченный голос пустым кэшем. Нужен полный"
+            echo "stage: auto (или assets), если кэш уже протух."
+            exit 1
+          }
+          echo "озвучка на месте: $(du -h "$VOICE" | cut -f1)"
 
       # Стадии post и shorts: упаковка переделывается без пересборки монтажа.
       # Монтаж (build.py) не бесплатный по времени (70-90 минут ffmpeg на
@@ -254,6 +364,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Этап 1 — озвучка, изображения, материал
+        id: assets
         if: steps.pick.outputs.do_assets == 'true'
         env:
           XAI_API_KEY:        ${{ secrets.XAI_API_KEY }}
@@ -267,10 +378,14 @@ jobs:
           MAGNIFIC_API_KEY:   ${{ secrets.MAGNIFIC_API_KEY }}
         run: python pipeline/assets.py jobs/${{ steps.pick.outputs.job }}.json
 
-      # Только если что-то качали. На чистом перерендере и на post папка не
-      # менялась — сохранять кэш заново нечем и незачем.
+      # Кэш кладём и при падении этапа 1: иначе оплаченная озвучка/картинки
+      # блоков 1..N пропадают вместе с раннером, а перезапуск жжёт квоту снова.
+      # material/vet тоже пишут в assets (новый футаж, vetted.json) — без
+      # save следующий stage: render поднял бы СТАРЫЙ кэш, и титры IA,
+      # которые только что отбраковали, снова попали бы в монтаж.
+      # На чистом render/post/shorts папка assets не менялась — save не нужен.
       - name: Кладём материалы в кэш
-        if: steps.pick.outputs.do_assets == 'true'
+        if: ${{ always() && steps.pick.outputs.skip != 'true' && (steps.pick.outputs.do_assets == 'true' || steps.pick.outputs.stage == 'material' || steps.pick.outputs.stage == 'vet') }}
         uses: actions/cache/save@v4
         with:
           path: work/${{ steps.pick.outputs.id }}/assets
