@@ -11,9 +11,12 @@ on:
         description: 'material / vet / assets / render / post / shorts / auto'
         required: true
         default: 'auto'
-  # Автозапуск:
-  #   • новый jobs/*.json (git A) → stage auto
-  #   • файл .github/rebuild/<job> → принудительный перезапуск этого job
+  # Автозапуск, В ЭТОМ ПОРЯДКЕ (см. шаг «Какой ролик собираем»):
+  #   1) новый jobs/*.json (git A) → stage auto — ПЕРВЫМ, даже если тем
+  #      же пушем приехал .github/rebuild/<тот-же-id>: на этой ветке у
+  #      джоба ещё нет истории кэша, маркер её и не обещает.
+  #   2) иначе файл .github/rebuild/<job> → принудительный перезапуск
+  #      этого job стадией из содержимого файла.
   # Правки существующих jobs (reject/queries) полный auto НЕ жгут.
   push:
     paths:
@@ -51,46 +54,56 @@ jobs:
             fi
             JOB=""
             STAGE=auto
-            # 1) Явный перезапуск: .github/rebuild/<job>
-            #    Имя файла = id джоба без .json. README/мусор игнорируем —
-            #    берём только то, для чего есть jobs/<name>.json.
-            REBUILD=""
+            # 1) Новый jobs/*.json — ПЕРВЫМ, до .github/rebuild/**. Причина
+            #    не порядок ради порядка: маркер force-rebuild для того же
+            #    id может приехать ОДНИМ пушем вместе с самим новым job-
+            #    файлом (слияние ветки, где маркер уже отслужил своё —
+            #    ровно так на ff-ep07 приехали оба разом при мерже PR).
+            #    На этой ветке у джоба ещё нет истории кэша, а маркер
+            #    требует stage=render поверх кэша, которого здесь никогда
+            #    не было — раннер падает с понятной, но ложной тревогой
+            #    вместо того, чтобы просто собрать новый ролик с нуля.
+            ADDED=""
             if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
-              while IFS= read -r f; do
-                [ -z "$f" ] && continue
-                j=$(basename "$f")
-                case "$j" in
-                  README.md|README|.gitkeep) continue ;;
-                esac
-                if [ -f "jobs/$j.json" ]; then
-                  REBUILD=$j
-                  break
-                fi
-              done < <(git diff --name-only "$BEFORE" "${{ github.sha }}" -- '.github/rebuild/' || true)
+              ADDED=$(git diff --diff-filter=A --name-only "$BEFORE" "${{ github.sha }}" -- 'jobs/*.json' \
+                | grep -vE '\.example\.json$|^jobs/_' \
+                | grep -vE '^jobs/auction-test\.json$' \
+                || true)
             fi
-            if [ -n "$REBUILD" ]; then
-              JOB="$REBUILD"
-              # Содержимое файла — стадия. Пустой или мусор → auto, как
-              # раньше. Иначе нельзя запустить shorts/material/render
-              # без workflow_dispatch.
-              raw=$(tr -d '[:space:]' < ".github/rebuild/$JOB" 2>/dev/null || true)
-              case "$raw" in
-                material|vet|assets|render|post|shorts|auto) STAGE=$raw ;;
-                *) STAGE=auto ;;
-              esac
-              echo "Принудительный перезапуск: .github/rebuild/$JOB (stage: $STAGE)"
+            if [ -n "$ADDED" ]; then
+              # Несколько новых файлов за один push — берём первый.
+              JOB=$(basename "$(echo "$ADDED" | head -1)" .json)
+              echo "Автозапуск по новому файлу: jobs/$JOB.json"
             else
-              ADDED=""
+              # 2) Явный перезапуск: .github/rebuild/<job> — только когда
+              #    джоб НЕ появился этим же пушем впервые (см. пункт 1).
+              #    Имя файла = id джоба без .json. README/мусор игнорируем —
+              #    берём только то, для чего есть jobs/<name>.json.
+              REBUILD=""
               if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
-                ADDED=$(git diff --diff-filter=A --name-only "$BEFORE" "${{ github.sha }}" -- 'jobs/*.json' \
-                  | grep -vE '\.example\.json$|^jobs/_' \
-                  | grep -vE '^jobs/auction-test\.json$' \
-                  || true)
+                while IFS= read -r f; do
+                  [ -z "$f" ] && continue
+                  j=$(basename "$f")
+                  case "$j" in
+                    README.md|README|.gitkeep) continue ;;
+                  esac
+                  if [ -f "jobs/$j.json" ]; then
+                    REBUILD=$j
+                    break
+                  fi
+                done < <(git diff --name-only "$BEFORE" "${{ github.sha }}" -- '.github/rebuild/' || true)
               fi
-              if [ -n "$ADDED" ]; then
-                # Несколько новых файлов за один push — берём первый.
-                JOB=$(basename "$(echo "$ADDED" | head -1)" .json)
-                echo "Автозапуск по новому файлу: jobs/$JOB.json"
+              if [ -n "$REBUILD" ]; then
+                JOB="$REBUILD"
+                # Содержимое файла — стадия. Пустой или мусор → auto, как
+                # раньше. Иначе нельзя запустить shorts/material/render
+                # без workflow_dispatch.
+                raw=$(tr -d '[:space:]' < ".github/rebuild/$JOB" 2>/dev/null || true)
+                case "$raw" in
+                  material|vet|assets|render|post|shorts|auto) STAGE=$raw ;;
+                  *) STAGE=auto ;;
+                esac
+                echo "Принудительный перезапуск: .github/rebuild/$JOB (stage: $STAGE)"
               fi
             fi
             if [ -z "$JOB" ]; then
