@@ -128,6 +128,12 @@
     ]
   },
   "youtube": {
+    "cover_kicker": "FOUND IN AN ATTIC",
+    "cover_sub": "SOLD FOR $9,000",
+    "cover_prompts": [
+      "Hyperrealistic 16:9 YouTube thumbnail. Curiosity gap: a factory-sealed Kid Icarus NES cardboard box in original 1980s shrink-wrap, filling the entire right half of the frame, caught in a single warm shaft of attic dust light. Extreme close crop on the box — the box IS the subject, not a wide attic with a tiny game on the floor. Dark void around it. No printed text, no price numbers, no logos for the model to invent.",
+      "Hyperrealistic 16:9 YouTube thumbnail. Different story: extreme macro of factory shrink-wrap vent holes and a vintage department-store price sticker on the NES box, filling the entire right half, with a 1988 paper receipt edge just in frame. Not an attic establishing shot, not a grading-slab collage, not an auction paddle wide shot. No readable letters or numbers."
+    ],
     "title": "He Found a $38 Nintendo Game. It Sold for $9,000.",
     "title_alternatives": [
       "The Sealed Nintendo Game Hiding in an Attic for 31 Years",

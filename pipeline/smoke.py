@@ -156,6 +156,10 @@ def main(job_path):
     prompts = (job.get("youtube") or {}).get("cover_prompts") or []
     if isinstance(prompts, list) and prompts and len(prompts) != 2:
         raise SystemExit(f"youtube.cover_prompts: {len(prompts)} шт., нужно ровно 2")
+    ctr_problems = covers.check_job_covers(job)
+    if ctr_problems:
+        raise SystemExit("обложки CTR: " + "; ".join(ctr_problems))
+    composed = covers.art_prompts(job)
     if job["id"] == "da-vinci-lost-millions":
         if "LOUVRE" not in kicker:
             raise SystemExit(f"da Vinci kicker не про Лувр: {kicker!r}")
@@ -165,6 +169,50 @@ def main(job_path):
             raise SystemExit("da Vinci: нужны два cover_prompts")
         if prompts[0] == prompts[1]:
             raise SystemExit("da Vinci: два одинаковых сюжета обложки")
+        blob0, blob1 = composed[0].lower(), composed[1].lower()
+        if "empty" not in blob0 or "frame" not in blob0:
+            raise SystemExit("da Vinci A: нужна огромная пустая рама")
+        if "salvator" not in blob1 and "walnut" not in blob1:
+            raise SystemExit("da Vinci B: нужен Salvator Mundi крупно")
+        if "open antique wooden trunk" in blob0 or "red silk" in blob0:
+            raise SystemExit("da Vinci A: ствол на полу снова делит кадр")
+    if job["id"] == "ff-ep07-kid-icarus-attic":
+        if "ATTIC" not in kicker:
+            raise SystemExit(f"ep07 kicker не про чердак: {kicker!r}")
+        if "9,000" not in sub and "9000" not in sub.replace(",", ""):
+            raise SystemExit(f"ep07 sub без суммы: {sub!r}")
+        if ("kid icarus" not in composed[0].lower()
+                and "nes" not in composed[0].lower()):
+            raise SystemExit("ep07 A: нужна коробка Kid Icarus")
+    overlay_job = {
+        "youtube": {},
+        "_превью_промпт": {
+            "overlay_text": "FOUND IN AN ATTIC. SOLD FOR $9,000."},
+    }
+    ok, osb = type_mod.cover_lines(overlay_job)
+    if ok != "FOUND IN AN ATTIC" or "9,000" not in osb:
+        raise SystemExit(f"overlay не разложился на kicker/sub: {ok!r} / {osb!r}")
+    fake = {
+        "id": "ctr-fallback",
+        "topic": {"slug": "yard-sale",
+                  "keywords": ["Ming dynasty porcelain bowl",
+                               "Faberge Imperial Egg",
+                               "auction records"]},
+        "youtube": {"title": "Yard Sale Bowl: $35 to $722,000",
+                    "chapters": ["The bowl", "The egg"]},
+    }
+    fp = covers.art_prompts(fake)
+    fail = covers.check_prompts(fp)
+    if fail:
+        raise SystemExit("fallback CTR: " + "; ".join(fail))
+    low = (fp[0] + fp[1]).lower()
+    if "ming" not in low and "porcelain" not in low:
+        raise SystemExit("fallback не взял keyword-предмет")
+    if "antique shop" in low:
+        raise SystemExit("fallback снова просит antique shop")
+    hooks = covers.visual_hooks(fake)
+    if "auction records" in (hooks[0] + hooks[1]).lower():
+        raise SystemExit("в герои обложки попал skip_keyword")
     try:
         if not covers.kicker_fits(job):
             raise SystemExit(f"kicker не влезает в TEXT_ZONE: {kicker!r}")
@@ -172,6 +220,7 @@ def main(job_path):
               + " влезает")
     except ImportError:
         print("   ! нет PIL — замер kicker пропущен")
+    print("   CTR-блок в обоих промптах, два разных сюжета")
 
     print("── окна шортсов")
     class _B:

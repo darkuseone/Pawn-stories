@@ -16,6 +16,7 @@ Liberation Sans / DejaVu. Сборка не падает из-за шрифта;
 Стекло только в ДЛИННОМ ролике. Шортс непрозрачный: белый + чёрная обводка.
 """
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -98,14 +99,30 @@ def _upper(s: str) -> str:
     return " ".join((s or "").split()).upper()
 
 
+def _split_overlay(overlay: str) -> tuple[str, str]:
+    """
+    Одна строка «КРЮЧОК. ЦИФРА» — два поля обложки, не один длинный
+    заголовок. На 120 px в ленте вторая фраза всё равно не влезет в kicker.
+    """
+    raw = (overlay or "").replace("|", ".")
+    bits = [p.strip(" .") for p in re.split(r"[.;|]+", raw) if p.strip(" .")]
+    if (len(bits) >= 2
+            and 1 <= len(bits[0].split()) <= 6
+            and 1 <= len(bits[1].split()) <= 8):
+        return _upper(bits[0]), _upper(bits[1])
+    if bits:
+        return _upper(bits[0]), _upper(bits[1]) if len(bits) > 1 else ""
+    return "", ""
+
+
 def cover_lines(job: dict) -> tuple[str, str]:
     """
     Крючок обложки (3–5 слов) и короткая вторая строка с цифрой.
 
-    Не полный youtube.title: в мобильной ленте ~150 px длинный заголовок
+    Не полный youtube.title: в мобильной ленте ~120–150 px длинный заголовок
     не читается. Спецификация выигрывает (cover_kicker / cover_sub), иначе
-    черновик из _превью_промпт.overlay_text, иначе двоеточие в title /
-    первые пять слов.
+    черновик из _превью_промпт.overlay_text (вторая фраза после точки —
+    sub), иначе двоеточие в title / первые пять слов.
     """
     y = job.get("youtube") or {}
     kicker = _upper(y.get("cover_kicker") or "")
@@ -114,9 +131,9 @@ def cover_lines(job: dict) -> tuple[str, str]:
         return kicker, sub
     overlay = ((job.get("_превью_промпт") or {}).get("overlay_text") or "").strip()
     if overlay:
-        parts = [p.strip() for p in overlay.replace("|", "\n").splitlines() if p.strip()]
-        if parts:
-            return _upper(parts[0]), _upper(parts[1]) if len(parts) > 1 else ""
+        a, b = _split_overlay(overlay)
+        if a:
+            return a, b
     title = (y.get("title") or job.get("id") or "").strip()
     if ":" in title:
         a, b = title.split(":", 1)

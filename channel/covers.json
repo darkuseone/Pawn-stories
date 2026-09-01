@@ -1,0 +1,29 @@
+{
+  "_": "Правила CTR для фонов обложек. Геометрия ( Oswald слева, TEXT_ZONE ) живёт в covers.py и не меняется отсюда. Этот файл читает covers.art_prompts() и дописывает блок к КАЖДОМУ промпту — и к youtube.cover_prompts, и к запасным. Правка «на будущее» сюда, а не в семь спецификаций: иначе следующий ролик уедет со старым «пустой левый край» без правила 120 px.",
+  "_зачем": "Большинство кликов — с телефона, где превью ~120 px в ширину (suggested / search / up-next), не 1280. На таком размере выживает один огромный предмет и жёсткий контраст по яркости, а не витрина лавки. Канал без ведущего: героем кадра должен быть tension object (пустая рама, печать, коробка, треснувшая доска), не лицо блогера. YouTube Test & Compare выбирает победителя по watch time, не по сырому CTR — кликбейт с ответом в картинке проигрывает.",
+  "marker": "CHANNEL COVER CTR:",
+  "constraint_block": "CHANNEL COVER CTR: Compose for a phone thumbnail ~120 pixels wide, not the 1280 canvas. ONE dominant subject only, occupying the entire RIGHT HALF of the 16:9 frame (about 45–55% of the image area), large enough that a 10x shrink still shows WHAT the object is. Place that hero in the right-center, vertically mid-frame. Leave the LEFT ~40% dark, empty, uncluttered — no objects, no text, no letters, no numbers, no dollar signs, no logos, no watermarks, no captions; title type is composited later. Never put the hero in the bottom-right corner (YouTube duration badge) or the far bottom edge (progress bar). Hard luminance contrast: the subject is much brighter OR much darker than the background, with a single warm key light and deep falloff — hue-only contrast turns to mud at 120px. No wide establishing shot of a shop, gallery, attic, courtroom, or auction room where the object is a small thing on a table. No collage, split-screen, before/after grid, UI chrome, or extra people. Photoreal cinematic still, shallow depth of field, 8k detail on the hero only. Imply a question; do not depict the answer or any readable writing.",
+  "variant_gap": "VARIANT A — curiosity gap / visual hole, not a catalog shot. Show ABSENCE or tension: empty ornate frame, bare iron pegs, unopened seal, silhouette with a hole, object wrapped and hidden. The missing or sealed thing IS the giant right-half subject.",
+  "variant_scale": "VARIANT B — a DIFFERENT story from A, not another angle of the same room. Extreme close-up of the actual artifact filling the right half, or gloved hands plus that artifact, or a tiny out-of-focus gavel/paddle BEHIND a giant foreground object. Scale and deal, not atmosphere.",
+  "crop_override": "If the scene below is a wide room, IGNORE the wide composition: crop until one named object fills the right half. Discard extra props.",
+  "skip_keywords": [
+    "auction records",
+    "antique appraisal",
+    "collecting market",
+    "retro video game collecting market",
+    "video game collecting",
+    "thrift store find",
+    "hidden wealth",
+    "sothebys",
+    "christies",
+    "lawsuit"
+  ],
+  "forbidden_in_auto": [
+    "antique shop",
+    "thrift store interior",
+    "busy shop",
+    "wide gallery",
+    "establishing shot of a room",
+    "crowded auction house interior as the subject"
+  ]
+}

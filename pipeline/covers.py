@@ -2,12 +2,30 @@
 covers.py — две обложки к готовому ролику.
 
     python pipeline/covers.py jobs/<id>.json
+    python pipeline/covers.py --check jobs/<id>.json
 
 Постоянная канала: левая треть почти чёрная, белый ультражирный гротеск
 Oswald Bold, крючок 3–5 слов + короткая вторая строка с цифрой, если она
 есть. Меняется только фон. Обе рисует xAI. Кадр из ролика — не третий
 равноправный вариант, а страховка: включается, только если генерация
 недобрала до COVER_COUNT.
+
+CTR правой половины
+-------------------
+Большинство кликов — с телефона, где превью ~120 px (suggested / search /
+up-next), не холст 1280. На таком размере выживает один огромный предмет
+на ПРАВОЙ половине и жёсткий контраст по яркости. Широкая лавка, галерея
+или чердак с крошечной вещью на столе в ленте читаются как шум.
+
+Правила лежат в channel/covers.json и дописываются к каждому промпту
+(и к youtube.cover_prompts, и к запасным). Сюжет ролика — из ключевых
+слов и глав, не универсальный «antique shop». Два варианта: дыра/загадка
+и масштаб/сделка — не два ракурса одной комнаты.
+
+Канал без ведущего: героем кадра tension object (пустая рама, печать,
+коробка, треснувшая доска), не лицо блогера. YouTube Test & Compare
+выбирает победителя по watch time, не по сырому CTR — в картинку не
+класть ответ и не рисовать суммы: сумма живёт в cover_sub.
 
 Почему текст рисуется здесь, а не моделью
 -----------------------------------------
@@ -18,6 +36,7 @@ Oswald Bold, крючок 3–5 слов + короткая вторая стр�
 оставляет в ленте нечитаемые буквы.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -31,6 +50,7 @@ from jobspec import load_job
 import type as type_mod
 
 ROOT = Path(__file__).parent.parent
+COVER_RULES = ROOT / "channel" / "covers.json"
 XAI = "https://api.x.ai/v1"
 
 W, H = 1280, 720
@@ -44,15 +64,127 @@ COVER_COUNT = 2
 TEXT_ZONE = 0.56
 MARGIN = 58
 
+# Запас, если channel/covers.json нет в чекауте. Живые правила — в JSON.
+CTR_MARKER = "CHANNEL COVER CTR:"
 LEFT_THIRD = (
     "IMPORTANT: keep the LEFT THIRD of the frame dark, empty and uncluttered "
     "— no text, no letters, no words, no watermark, no logo. The subject sits "
-    "on the RIGHT side of the frame."
+    "on the RIGHT side of the frame, filling that half."
 )
 
 
 def log(*a):
     print(*a, flush=True)
+
+
+def load_cover_rules() -> dict:
+    """Правила CTR канала. Ключи с подчёркиванием — комментарии, не данные."""
+    if not COVER_RULES.exists():
+        return {}
+    data = json.loads(COVER_RULES.read_text(encoding="utf-8"))
+    return {k: v for k, v in data.items() if not str(k).startswith("_")}
+
+
+def _marker(rules: dict) -> str:
+    return str(rules.get("marker") or CTR_MARKER)
+
+
+OBJECTISH = (
+    "mark", "hallmark", "bowl", "egg", "frame", "coin", "penny", "jacket",
+    "cartridge", "box", "seal", "panel", "painting", "print", "porcelain",
+    "trunk", "gavel", "silver", "underside", "nes", "mona", "salvator",
+    "faberge", "durer", "ming", "sticker", "receipt", "peg",
+)
+
+
+def _kw_usable(kw: str, skip: list[str]) -> bool:
+    low = (kw or "").strip().lower()
+    if len(low) < 4:
+        return False
+    skip_set = {s.strip().lower() for s in skip if s}
+    if low in skip_set:
+        return False
+    return True
+
+
+def _kw_score(kw: str, kicker: str = "") -> int:
+    """Длинное имя вещи важнее абстракции («habit», «market»)."""
+    low = kw.lower()
+    words = low.split()
+    score = len(words) * 10 + min(len(kw), 40)
+    if any(tok in low for tok in OBJECTISH):
+        score += 50
+    if any(w in {"habit", "value", "market", "records", "lawsuit"} for w in words):
+        score -= 35
+    kick = {w.lower() for w in (kicker or "").split() if len(w) > 2}
+    if kick and any(w in low for w in kick):
+        score += 25
+    return score
+
+
+def visual_hooks(job, rules=None) -> tuple[str, str]:
+    """
+    Два разных героя правой половины: из ключевых слов, глав, крючка.
+
+    Короткие абстракции («reverse», «auction records») пропускаются —
+    модель из них рисует витрину. Нужны имена и вещи: рама, печать, коробка.
+    """
+    rules = rules if rules is not None else load_cover_rules()
+    skip = [str(s) for s in (rules.get("skip_keywords") or [])]
+    kicker, sub = type_mod.cover_lines(job)
+    kws = list((job.get("topic") or {}).get("keywords") or [])
+    ranked = sorted(
+        (str(k).strip() for k in kws if _kw_usable(str(k), skip)),
+        key=lambda s: _kw_score(s, kicker), reverse=True)
+    chapters = [str(c).strip() for c in ((job.get("youtube") or {}).get("chapters") or [])
+                if str(c).strip()]
+    extra = [c for c in chapters if _kw_usable(c, skip)]
+    pool = ranked + extra
+    if kicker:
+        pool.append(kicker.lower())
+    if sub:
+        pool.append(sub.lower())
+    gap = pool[0] if pool else (kicker or "empty ornate picture frame")
+    scale = next((p for p in pool[1:] if p.lower() != gap.lower()), "")
+    if not scale:
+        scale = chapters[min(2, len(chapters) - 1)] if chapters else (
+            "one large authentic artifact, extreme close-up")
+    return gap, scale
+
+
+def _apply_ctr(scene: str, variant: str, rules: dict) -> str:
+    """Дописать блок CTR, если его ещё нет. Сюжет не переписывается."""
+    scene = (scene or "").strip()
+    mark = _marker(rules)
+    if mark in scene:
+        return scene
+    gap = (rules.get("variant_gap") or "").strip()
+    scale = (rules.get("variant_scale") or "").strip()
+    crop = (rules.get("crop_override") or "").strip()
+    block = (rules.get("constraint_block") or LEFT_THIRD).strip()
+    recipe = gap if variant == "gap" else scale
+    bits = [scene, crop, recipe, block]
+    return " ".join(b.strip() for b in bits if b and b.strip())
+
+
+def _auto_scenes(job, rules: dict) -> list[str]:
+    """Запасной сюжет. Черновик _превью_промпт.prompt не берём: там часто
+    широкая комната, а не герой на правую половину."""
+    topic = ((job.get("topic") or {}).get("slug") or
+             (job.get("youtube") or {}).get("title") or job.get("id") or "")
+    gap, scale = visual_hooks(job, rules)
+    a = (
+        f"Hyperrealistic 16:9 YouTube thumbnail. Curiosity-gap still of "
+        f"{gap}: ONE giant tension object filling the right half of the "
+        f"frame, extreme close crop. Dark empty left. Theme: {topic}."
+    )
+    b = (
+        f"Hyperrealistic 16:9 YouTube thumbnail. A different story from the "
+        f"first cover: {scale} as a giant right-half close-up — gloved hands "
+        f"and the artifact, or the object itself filling the frame. Not the "
+        f"same room. Theme: {topic}."
+    )
+    return [a, b]
 
 
 def art_prompts(job, n=2):
@@ -62,26 +194,54 @@ def art_prompts(job, n=2):
     youtube.cover_prompts — ровно два разных сюжета. Не два ракурса одной
     лавки: вариант A — визуальная дыра/загадка, вариант B — другой крючок
     (крупный предмет, руки, торг). Тема из topic / глав, не универсальный
-    «antique shop».
+    «antique shop». Блок CTR из channel/covers.json дописывается всегда.
     """
+    rules = load_cover_rules()
     y = job.get("youtube") or {}
     specified = y.get("cover_prompts")
+    scenes = []
     if isinstance(specified, list):
-        out = [str(p).strip() for p in specified if str(p).strip()]
-        if len(out) >= n:
-            return out[:n]
-    topic = (job.get("topic") or {}).get("slug", "") or y.get("title", "")
-    preview = ((job.get("_превью_промпт") or {}).get("prompt") or "").strip()
-    a = preview or (
-        f"Hyperrealistic 16:9 thumbnail. Visual puzzle: an empty ornate frame "
-        f"or a silhouette with a hole in the scene, subject on the right. "
-        f"Theme: {topic}. Cinematic, high contrast. {LEFT_THIRD}")
-    b = (
-        f"Hyperrealistic 16:9 thumbnail. A different hook from an empty frame: "
-        f"one large object, hands in a deal, or a close-up artifact — not the "
-        f"same shop or gallery as the first cover. Subject on the right. "
-        f"Theme: {topic}. Cinematic, high contrast. {LEFT_THIRD}")
-    return [a, b][:n]
+        scenes = [str(p).strip() for p in specified if str(p).strip()]
+    if len(scenes) < n:
+        auto = _auto_scenes(job, rules)
+        scenes = (scenes + auto)[:n] if scenes else auto
+    variants = ("gap", "scale")
+    out = []
+    for i in range(n):
+        scene = scenes[i] if i < len(scenes) else scenes[-1]
+        out.append(_apply_ctr(scene, variants[i % 2], rules))
+    return out
+
+
+def check_prompts(prompts, rules=None) -> list[str]:
+    """Дешёвая проверка готовых промптов. Пустой список — порядок."""
+    rules = rules if rules is not None else load_cover_rules()
+    mark = _marker(rules)
+    problems = []
+    if len(prompts) != COVER_COUNT:
+        problems.append(f"промптов {len(prompts)}, нужно {COVER_COUNT}")
+        return problems
+    if prompts[0].strip() == prompts[1].strip():
+        problems.append("два одинаковых сюжета обложки")
+    blob = " ".join(prompts).lower()
+    if mark.lower() not in blob:
+        problems.append("нет блока CHANNEL COVER CTR")
+    if "120" not in blob:
+        problems.append("в CTR-блоке нет правила 120 px")
+    if "bottom-right" not in blob and "bottom right" not in blob:
+        problems.append("нет предупреждения про шильдик длительности")
+    return problems
+
+
+def check_job_covers(job) -> list[str]:
+    """Промпты + крючок. Для смоука и `covers.py --check`."""
+    problems = []
+    kicker, _sub = type_mod.cover_lines(job)
+    if not kicker:
+        problems.append("пустой cover_kicker")
+    prompts = art_prompts(job, n=COVER_COUNT)
+    problems.extend(check_prompts(prompts))
+    return problems
 
 
 def generate_art(prompt: str, dst: Path, key: str, model: str) -> bool:
@@ -277,4 +437,16 @@ def main(job_path):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--check"]:
+        job = load_job(sys.argv[2])
+        problems = check_job_covers(job)
+        kicker, sub = type_mod.cover_lines(job)
+        print(f"kicker: {kicker}" + (f" / {sub}" if sub else ""))
+        for i, p in enumerate(art_prompts(job), 1):
+            print(f"--- prompt {i} ({len(p)} chars) ---")
+            print(p)
+        if problems:
+            raise SystemExit("обложки: " + "; ".join(problems))
+        print("CTR-промпты в порядке")
+        raise SystemExit(0)
     main(sys.argv[1])
