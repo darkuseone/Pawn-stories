@@ -291,13 +291,13 @@ def main(job_path):
         shorts.lines_with_times(kara_marks, 0, 0, 0.0), layout,
         td / "kara.ass", word_marks=kara_marks, t0=0.0, t1=2.0)
     ktxt = k_ass.read_text(encoding="utf-8")
-    if type_mod.AMBER not in ktxt:
-        raise SystemExit("в субтитрах шортса нет подсветки звучащего слова")
+    if type_mod.SUB_DIM_A not in ktxt or "\\1a&H00&" not in ktxt:
+        raise SystemExit("в субтитрах шортса нет заливки по словам")
     if not shorts.karaoke_ready(kara_marks, 0, 0):
         raise SystemExit("karaoke_ready не увидел измеренные слова")
     if shorts.karaoke_ready([{"text": "x", "start": 0, "end": 1}], 0, 0):
         raise SystemExit("karaoke_ready принял предложение без слов")
-    print("   подсветка звучащего слова в шортсе — та же, что в длинном")
+    print("   заливка по словам в шортсе — та же, что в длинном")
     opening = type_mod.write_opening_ass(job, td / "opening.ass")
     otext = opening.read_text(encoding="utf-8")
     if kicker.split()[0] not in otext.upper() and kicker not in otext:
@@ -329,8 +329,11 @@ def main(job_path):
         otxt = overlay.read_text(encoding="utf-8")
         if ",KSUB," not in otxt:
             raise SystemExit("в overlay.ass нет ни одного субтитра")
-        if type_mod.AMBER not in otxt:
-            raise SystemExit("в субтитрах нет тёплой подсветки (AMBER)")
+        if type_mod.SUB_DIM_A not in otxt:
+            raise SystemExit("в субтитрах нет приглушённой ступени — "
+                             "заливка по словам не работает")
+        if "\\1a&H00&" not in otxt:
+            raise SystemExit("слова не выходят на полную яркость")
         # Полей в строке Style должно быть ровно столько же, сколько в
         # Format: лишнее поле libass читает молча и не тем ключом.
         fmt = next(l for l in otxt.splitlines() if l.startswith("Format:")
@@ -350,8 +353,13 @@ def main(job_path):
         if rev:
             raise SystemExit(f"{len(rev)} анимаций подсветки с концом раньше "
                              f"начала — эти слова не подсветятся")
+        # Заливка обязана идти ТОЛЬКО вперёд: возврат в приглушённое
+        # состояние — это прежний приём «бегущее слово», от которого ушли.
+        if f"\\1a{type_mod.SUB_DIM_A}" in otxt.split("}", 1)[-1] and (
+                f",\\1a{type_mod.SUB_DIM_A})" in otxt):
+            raise SystemExit("слово гаснет обратно — заливка не накапливается")
         print(f"   overlay.ass: {otxt.count('Dialogue:')} событий, "
-              f"{otxt.count(',KSUB,')} субтитров, подсветка янтарём")
+              f"{otxt.count(',KSUB,')} субтитров, заливка по словам")
 
     print("── плашки на числах — шрифтом канала")
     from editorial import textcard as textcard_mod

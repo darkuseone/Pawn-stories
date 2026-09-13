@@ -472,19 +472,22 @@ def build_ass(subs, layout: dict, out: Path, word_marks=None,
     \\fad + масштаб 118%→100%, вспышка обводки, затем \\move наверх.
     Не Remotion, не deshake, не второй Ken Burns.
 
-    ПОДСВЕТКА ЗВУЧАЩЕГО СЛОВА. word_marks — предложения с измеренными
-    тайм-кодами слов (assets.words_between по посимвольному выравниванию
-    ElevenLabs). Есть они — строка показывается целиком, а слово, которое
-    произносится прямо сейчас, перекрашивается в тёплый янтарь и
-    возвращается обратно (type.karaoke_line). Нет — старая подача кусками
-    фразы без подсветки: оценка «слово занимает столько же, сколько его
-    доля символов» на быстрой речи заметно отстаёт от голоса, и красить
-    по ней хуже, чем не красить вовсе.
+    ПОДСВЕТКА ЗАЛИВКОЙ. word_marks — предложения с измеренными тайм-кодами
+    слов (assets.words_between по посимвольному выравниванию ElevenLabs).
+    Строка показывается целиком приглушённой, и каждое слово к своему
+    тайм-коду выходит на полную яркость И ТАК И ОСТАЁТСЯ (type.karaoke_line)
+    — та же механика, что в длинном ролике, иначе шортс перестаёт читаться
+    как его кусок. Нет измеренных слов — строка выводится без заливки:
+    подпись есть всегда, выдуманных тайм-кодов слов нет.
     """
     q_size = layout["size"] or 1
     all_lines = [l for _, _, c in subs for l in wrap(c, SUB_MAX_CHARS)]
     sub_size = fit_size(all_lines, W - 2 * SUB_MARGIN, SUB_SIZE, floor=34)
+    # Заливка субтитра — тот же #f5f5f7, что в длинном ролике (type.SUB_FULL);
+    # приглушённую ступень задаёт \\1a внутри события. Шапка с вопросом
+    # остаётся чисто белой: она не заливается и должна быть ярче подписи.
     white, black = "&H00FFFFFF", "&H00000000"
+    sub_fill = "&H00" + type_mod.SUB_FULL.strip("&H&")
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -496,7 +499,7 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: QGLOW,{FONT},{q_size},{white},{black},&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,40,40,40,1
 Style: Q,{FONT},{q_size},{white},{black},&H00000000,-1,0,0,0,100,100,0,0,1,{OUTLINE},0,5,40,40,40,1
-Style: SUB,{FONT},{sub_size},{white},{black},&H00000000,-1,0,0,0,100,100,0,0,1,7,0,5,{SUB_MARGIN},{SUB_MARGIN},60,1
+Style: SUB,{FONT},{sub_size},{sub_fill},{black},&H00000000,-1,0,0,0,100,100,0,0,1,7,0,5,{SUB_MARGIN},{SUB_MARGIN},60,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -525,10 +528,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                                    W - 2 * SUB_MARGIN, style="SUB",
                                    max_lines=SUB_MAX_LINES)
     if kara:
-        for s, e, _style, body in kara:
+        # Шортс центрируется, а не выключается влево, как длинный: кадр
+        # 1080 в ширину, и колонка с ровным левым краем в нём читается как
+        # съехавшая вбок подпись, а не как выключка.
+        for s, e, _style, body, enter in kara:
             rows.append(
                 f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
-                f"{{\\pos({W//2},{int(H*SUB_Y)})}}" + body)
+                + type_mod.sub_tag(W // 2, int(H * SUB_Y), an=5, enter=enter)
+                + body)
     else:
         for s, e, c in subs:
             rows.append(
