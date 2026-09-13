@@ -167,12 +167,45 @@ def _apply_ctr(scene: str, variant: str, rules: dict) -> str:
     return " ".join(b.strip() for b in bits if b and b.strip())
 
 
+def _era_of(job) -> str:
+    """
+    Эпоха сюжета для шаблона: год из темы, заголовка или глав.
+
+    Год — не украшение: «1943» или «1911» задаёт модели материалы и износ,
+    а без него она рисует ровную современную студийную съёмку. Не нашли —
+    пустая строка, и шаблон обходится без упоминания эпохи.
+    """
+    import re as _re
+    t = job.get("topic") or {}
+    y = job.get("youtube") or {}
+    blob = " ".join([str(t.get("slug") or ""), " ".join(map(str, t.get("keywords") or [])),
+                     str(y.get("title") or ""), " ".join(map(str, y.get("chapters") or []))])
+    m = _re.search(r"\b(1[5-9]\d{2}|20[0-2]\d)\b", blob)
+    return f"period-correct {m.group(1)}" if m else "period-correct"
+
+
+def _fill(template: str, item: str, era: str) -> str:
+    """Плейсхолдеры шаблона. Неизвестный ключ оставляется как есть."""
+    return (template.replace("{ITEM}", item or "the artifact")
+                    .replace("{ERA}", era or "period-correct"))
+
+
 def _auto_scenes(job, rules: dict) -> list[str]:
     """Запасной сюжет. Черновик _превью_промпт.prompt не берём: там часто
     широкая комната, а не герой на правую половину."""
     topic = ((job.get("topic") or {}).get("slug") or
              (job.get("youtube") or {}).get("title") or job.get("id") or "")
     gap, scale = visual_hooks(job, rules)
+    era = _era_of(job)
+    t_gap = (rules.get("scene_template_gap") or "").strip()
+    t_scale = (rules.get("scene_template_scale") or "").strip()
+    if t_gap and t_scale:
+        # Шаблон живёт в channel/covers.json рядом с правилами CTR, а не в
+        # коде: сюжет — это редакторское решение канала, и править его надо
+        # там же, где «120 px» и «не правый нижний угол».
+        a = _fill(t_gap, gap, era) + f" Theme: {topic}."
+        b = _fill(t_scale, scale, era) + f" Theme: {topic}."
+        return [a, b]
     a = (
         f"Hyperrealistic 16:9 YouTube thumbnail. Curiosity-gap still of "
         f"{gap}: ONE giant tension object filling the right half of the "

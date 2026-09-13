@@ -457,13 +457,29 @@ def header_layout(question: str, style: str = "") -> dict:
                 intro_cy=int(H * 0.42), block_cy=block_cy)
 
 
-def build_ass(subs, layout: dict, out: Path):
+def karaoke_ready(marks, lo, hi) -> bool:
+    """Есть ли ИЗМЕРЕННЫЕ тайм-коды слов у всех предложений куска."""
+    part = marks[lo:hi + 1]
+    return bool(part) and all(m.get("words") for m in part)
+
+
+def build_ass(subs, layout: dict, out: Path, word_marks=None,
+              t0: float = 0.0, t1: float = 0.0):
     """
     Шапка и субтитры: Oswald, белый, чёрная обводка, без стекла и без жёлтого.
 
     Вступление вопроса в libass: слой с сильным \\blur гаснет, резкий слой
     \\fad + масштаб 118%→100%, вспышка обводки, затем \\move наверх.
     Не Remotion, не deshake, не второй Ken Burns.
+
+    ПОДСВЕТКА ЗВУЧАЩЕГО СЛОВА. word_marks — предложения с измеренными
+    тайм-кодами слов (assets.words_between по посимвольному выравниванию
+    ElevenLabs). Есть они — строка показывается целиком, а слово, которое
+    произносится прямо сейчас, перекрашивается в тёплый янтарь и
+    возвращается обратно (type.karaoke_line). Нет — старая подача кусками
+    фразы без подсветки: оценка «слово занимает столько же, сколько его
+    доля символов» на быстрой речи заметно отстаёт от голоса, и красить
+    по ней хуже, чем не красить вовсе.
     """
     q_size = layout["size"] or 1
     all_lines = [l for _, _, c in subs for l in wrap(c, SUB_MAX_CHARS)]
@@ -503,11 +519,22 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f"\\fscx118\\fscy118\\t(0,{PUNCH_MS},\\fscx100\\fscy100)"
             f"\\bord{OUTLINE}\\t(120,200,\\bord16)\\t(200,360,\\bord{OUTLINE})"
             f"\\fad(90,0)}}" + text)
-    for s, e, c in subs:
-        rows.append(
-            f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
-            f"{{\\pos({W//2},{int(H*SUB_Y)})}}"
-            + "\\N".join(ass_escape(l) for l in wrap(c, SUB_MAX_CHARS)))
+    kara = []
+    if word_marks:
+        kara = type_mod.sub_events(word_marks, t0, t1 or 10 ** 9, sub_size,
+                                   W - 2 * SUB_MARGIN, style="SUB",
+                                   max_lines=SUB_MAX_LINES)
+    if kara:
+        for s, e, _style, body in kara:
+            rows.append(
+                f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
+                f"{{\\pos({W//2},{int(H*SUB_Y)})}}" + body)
+    else:
+        for s, e, c in subs:
+            rows.append(
+                f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
+                f"{{\\pos({W//2},{int(H*SUB_Y)})}}"
+                + "\\N".join(ass_escape(l) for l in wrap(c, SUB_MAX_CHARS)))
     out.write_text(head + "\n".join(rows) + "\n", encoding="utf-8")
     return out
 
@@ -668,10 +695,14 @@ def main(job_path, want=2):
         question = per_block.get(str(beat.block), default_question)
         layout = header_layout(question)
         subs = lines_with_times(marks, lo, hi, t0)
-        ass = build_ass(subs, layout, out / f"short_{n}.ass")
+        kara_ok = karaoke_ready(marks, lo, hi)
+        ass = build_ass(subs, layout, out / f"short_{n}.ass",
+                        word_marks=marks[lo:hi + 1] if kara_ok else None,
+                        t0=t0, t1=t1)
         dst = out / f"short_{n}.mp4"
         log(f"── шортс {n}: {t0:.1f}–{t1:.1f} с ({t1-t0:.1f} с), "
             f"доля «{beat.kind}», блок {beat.block}, субтитров {len(subs)}, "
+            f"{'подсветка по замеру' if kara_ok else 'БЕЗ подсветки (нет слов в marks)'}, "
             f"вопрос: {question or '(нет)'}")
         render_short(final, t0, t1, ass, dst,
                      crf=int((job.get("style_override") or {}).get("crf", 20)))

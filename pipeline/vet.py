@@ -626,6 +626,41 @@ def triage(path: Path, im, bad, pale, src, query, current_queries, trusted):
     return "ask", "локальные признаки молчат"
 
 
+# ─────────────────── ПАМЯТЬ ЗРЕНИЯ МЕЖДУ ПРОГОНАМИ ───────────────────
+#
+# Ролик пересобирается пять-десять раз, и каждая пересборка, доходившая до
+# этапа 1, спрашивала зрение заново обо ВСЕХ спорных кадрах — включая те,
+# что не менялись с прошлого прогона и уже получили вердикт. Правило
+# канала («тратить токены при пересборке можно только на зрение») говорит
+# не «спрашивать всегда», а «спрашивать заново, когда изменились запросы,
+# промпт отбраковки или состав скачанного». Ровно это и проверяет подпись:
+#
+#   dHash кадра  — изменился файл (или это новый файл) → спросить заново
+#   промпт       — тема, ключевые слова, описание → спросить заново
+#   модель       — другая модель отвечает иначе → спросить заново
+#
+# Ничего не совпало — вердикт берётся из прошлого vetted.json, и прогон
+# стоит ноль. Совпало не всё — спрашиваем, как раньше.
+
+
+def vision_sig(frame_hash: int, topic: str, desc: str, model: str) -> str:
+    """Подпись «этот кадр этой моделью по этому промпту»."""
+    import hashlib
+    blob = f"{frame_hash}|{topic}|{desc}|{model}".encode("utf-8")
+    return hashlib.sha1(blob).hexdigest()[:16]
+
+
+def previous_verdicts(work: Path) -> dict:
+    """Прошлый vetted.json. Нет файла или он битый — пустая память."""
+    p = work / "vetted.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+
+
 def vet_all(job, work: Path, use_vision=True):
     topic, desc = topic_text(job)
     # Модель не задаётся здесь: её подбирает choose_model ниже, на пробной
@@ -638,6 +673,8 @@ def vet_all(job, work: Path, use_vision=True):
                           job.get("archive_queries", []))
 
     meta = manifest_meta(work)
+    prev = previous_verdicts(work)
+    reused = 0
     groups = {"clip": sorted((work / "footage").glob("clip_*")),
               "arch": sorted((work / "archive").glob("arch_*"))}
 
@@ -678,6 +715,10 @@ def vet_all(job, work: Path, use_vision=True):
 
         decided, ask_list, frames = {}, [], {}
         hashes, srcs = {}, {}
+        # Чьи вердикты пришли ОТ МОДЕЛИ: только им имеет смысл писать
+        # подпись. Решение первого, локального яруса пересчитывается на
+        # каждом прогоне бесплатно, и память ему не нужна.
+        from_vision = set()
         for f in files:
             im, bad, pale, probed = cheap_problems(f)
             frames[f] = im
@@ -704,6 +745,21 @@ def vet_all(job, work: Path, use_vision=True):
             f"зрению осталось {len(ask_list)}")
 
         vision_out = {}
+        if vision_ok and ask_list:
+            # Сначала память: кадр с той же подписью уже был показан модели
+            # на прошлом прогоне, и ответ с тех пор измениться не мог.
+            fresh = []
+            for f, why in ask_list:
+                old_row = (prev.get(kind) or {}).get(str(index_of(f))) or {}
+                sig = vision_sig(hashes.get(f, 0), topic, desc, model)
+                if old_row.get("sig") == sig and "keep" in old_row:
+                    decided[f] = (bool(old_row["keep"]),
+                                  old_row.get("why", "вердикт с прошлого прогона"))
+                    from_vision.add(f)
+                    reused += 1
+                else:
+                    fresh.append((f, why))
+            ask_list = fresh
         if vision_ok and ask_list:
             def one(item):
                 f, _why = item
@@ -732,7 +788,10 @@ def vet_all(job, work: Path, use_vision=True):
                     f, (True, "зрение не спрашивалось", (0, 0)))
                 if keep is None:
                     keep, why = True, f"неясный ответ зрения: {why}"
-            verdicts[kind][str(n)] = {"keep": bool(keep), "why": why}
+            row = {"keep": bool(keep), "why": why}
+            if vision_ok and f in hashes and (f in vision_out or f in from_vision):
+                row["sig"] = vision_sig(hashes[f], topic, desc, model)
+            verdicts[kind][str(n)] = row
             kept += bool(keep)
 
         log(f"   годных {kept}, отбраковано {len(files) - kept}")
@@ -740,6 +799,9 @@ def vet_all(job, work: Path, use_vision=True):
             if not v["keep"]:
                 log(f"     {kind} {int(n):03d}: {v['why']}")
 
+    if reused:
+        log(f"── память зрения: {reused} вердиктов взяты с прошлого прогона "
+            f"(кадр, промпт и модель не менялись) — токены на них не тратились")
     if asked:
         p_in, p_out = price_of(model or "")
         cost = tok_in / 1e6 * p_in + tok_out / 1e6 * p_out

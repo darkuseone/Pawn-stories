@@ -174,28 +174,79 @@ def available_voices(api_key, limit=25):
         return f"(список голосов получить не вышло: {e})"
 
 
+def words_between(align, i0, i1, offset):
+    """
+    ИЗМЕРЕННЫЕ тайм-коды слов внутри предложения [i0, i1].
+
+    Зачем это нужно отдельно от предложений
+    ---------------------------------------
+    Выравнивание ElevenLabs приходит ПОСИМВОЛЬНОЕ, и до сих пор из него
+    брались только границы предложений, а сами символы выбрасывались.
+    Всё, что дальше хотело знать время СЛОВА — караоке-подсветка субтитра,
+    подпись в шортсе, — вынуждено было делить длительность предложения
+    пропорционально длине куска в символах. Это оценка, а не замер: на
+    быстрой речи подпись заметно отстаёт от голоса, и это увидели на
+    готовом шортсе (см. шапку shorts.py).
+
+    Замер уже оплачен вместе со звуком и лежит в block_NN.json. Стоит эта
+    функция ноль и на пересборке не тратит ничего: посимвольные файлы
+    приезжают из кэша вместе с mp3.
+
+    Слово — кусок между пробелами. Начало — начало его первого символа,
+    конец — конец последнего.
+    """
+    chars, starts, ends = align["chars"], align["starts"], align["ends"]
+    out, cur, w_start, w_end = [], [], None, None
+    for i in range(i0, min(i1 + 1, len(chars))):
+        ch = chars[i]
+        if ch.isspace():
+            if cur:
+                out.append({"w": "".join(cur),
+                            "s": round(w_start + offset, 3),
+                            "e": round(w_end + offset, 3)})
+                cur, w_start, w_end = [], None, None
+            continue
+        if w_start is None:
+            w_start = starts[i]
+        cur.append(ch)
+        w_end = ends[i]
+    if cur:
+        out.append({"w": "".join(cur),
+                    "s": round(w_start + offset, 3),
+                    "e": round(w_end + offset, 3)})
+    return out
+
+
 def sentence_marks(text, align, offset):
     """
     Превращает посимвольные тайм-коды в границы предложений.
     Это и есть точки, где робот будет менять кадр.
+
+    Рядом с каждым предложением кладутся ИЗМЕРЕННЫЕ тайм-коды его слов
+    (words_between): караоке-подсветке и субтитрам шортса нужен замер, а
+    не пропорция от длины. Поле необязательное — старые marks.json без
+    него читаются как раньше, просто подсветка падает обратно на оценку.
     """
     chars, starts, ends = align["chars"], align["starts"], align["ends"]
     if not chars:
         return []
-    marks, buf, buf_start = [], [], None
+    marks, buf, buf_start, i_start = [], [], None, 0
     for i, ch in enumerate(chars):
         if buf_start is None:
-            buf_start = starts[i]
+            buf_start, i_start = starts[i], i
         buf.append(ch)
         if ch in ".!?" and i + 1 < len(chars) and chars[i + 1] in " \n":
             marks.append({"text": "".join(buf).strip(),
                           "start": round(buf_start + offset, 3),
-                          "end": round(ends[i] + offset, 3)})
+                          "end": round(ends[i] + offset, 3),
+                          "words": words_between(align, i_start, i, offset)})
             buf, buf_start = [], None
     if buf:
         marks.append({"text": "".join(buf).strip(),
                       "start": round((buf_start or 0) + offset, 3),
-                      "end": round(ends[-1] + offset, 3)})
+                      "end": round(ends[-1] + offset, 3),
+                      "words": words_between(align, i_start,
+                                             len(chars) - 1, offset)})
     return marks
 
 
@@ -230,9 +281,15 @@ def build_voice(job, work: Path):
             log(f"  блок {i} уже озвучен, пропускаю")
         else:
             log(f"  озвучиваю блок {i} ({len(block)} символов)")
+            # similarity_boost — имя ИЗ API ElevenLabs, и именно оно стоит
+            # в четырёх спецификациях канала: его подставляет любой пример
+            # из документации. Читалось только similarity, и эти четыре
+            # ролика молча озвучились на умолчании 0.78 вместо заказанного
+            # значения — деньги списаны, в логе ни строки. Читаем оба имени.
             al = tts_block(block, mp3, voice, key,
                            vs.get("stability", 0.42),
-                           vs.get("similarity", 0.78),
+                           vs.get("similarity",
+                                  vs.get("similarity_boost", 0.78)),
                            vs.get("style", 0.10))
             (adir / f"block_{i:02d}.json").write_text(json.dumps(al))
         al = json.loads((adir / f"block_{i:02d}.json").read_text())
@@ -1931,6 +1988,15 @@ def _fill_generate(job, work: Path, missing: int, model, key):
 
 def main(job_path, stage="all"):
     job = load_job(job_path)
+
+    # ПРОВЕРКА СПЕЦИФИКАЦИИ ДО ПЕРВЫХ ДЕНЕГ. Этап 1 — это озвучка и
+    # генерация целиком; опечатка в имени поля верхнего уровня не роняет
+    # ничего, она просто отключает настройку, и видно это уже на готовом
+    # ролике. style_override проверялся и раньше, но в build.py — то есть
+    # на два этапа позже, когда голос уже оплачен.
+    import jobspec as jobspec_mod
+    jobspec_mod.require_ok(job, log)
+
     work = Path("work") / job["id"] / "assets"
     work.mkdir(parents=True, exist_ok=True)
 

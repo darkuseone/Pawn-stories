@@ -59,6 +59,25 @@ def split_sentences(text: str):
     return [s for s in out if s]
 
 
+def mock_words(text: str, start: float, dur: float):
+    """
+    Тайм-коды слов для синтетики — пропорционально длине слова.
+
+    У настоящей озвучки они ИЗМЕРЕНЫ (assets.words_between по посимвольному
+    выравниванию ElevenLabs); здесь измерять нечего, звук синтетический.
+    Формат тот же, и только он здесь и проверяется: без поля words смоук
+    не увидел бы караоке-дорожку вовсе.
+    """
+    words = text.split()
+    total = sum(len(w) for w in words) or 1
+    out, t = [], start
+    for w in words:
+        wd = dur * len(w) / total
+        out.append({"w": w, "s": round(t, 3), "e": round(t + wd, 3)})
+        t += wd
+    return out
+
+
 def build_marks(job):
     """Тайм-коды предложений из длины текста. Тот же формат, что у assets.py."""
     marks, t = [], 0.0
@@ -66,7 +85,8 @@ def build_marks(job):
         for s in split_sentences(block):
             dur = max(1.2, len(s) / CHARS_PER_SECOND)
             marks.append({"text": s, "start": round(t, 3),
-                          "end": round(t + dur, 3)})
+                          "end": round(t + dur, 3),
+                          "words": mock_words(s, t, dur)})
             t += dur + PAUSE
     return marks, round(t, 3)
 

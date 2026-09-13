@@ -31,15 +31,29 @@ drawtext с выражениями по времени. Все четыре ст
 import re
 from pathlib import Path
 
-# Системные шрифты. Проверяются по порядку: на раннере GitHub Actions
-# стоит DejaVu, на локальной машине может быть что угодно. Если не нашли
-# ни одного — плашки молча выключаются, ролик собирается без них.
+# ШРИФТ КАНАЛА, А НЕ СИСТЕМНЫЙ. Раньше здесь первым стоял DejaVu Serif:
+# плашка с суммой — единственная надпись ролика, набранная НЕ Oswald, и
+# на кадре это видно рядом со стеклом названия и субтитром. Канал свёл
+# обложки, стекло и шортсы к одному файлу (type.py) — плашки остались
+# единственным исключением, и это было упущением, а не решением.
+#
+# Системные остаются запасными: сборка не должна падать из-за шрифта.
+# Если не нашли ни одного — плашки молча выключаются, ролик собирается
+# без них (см. moments()).
 FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
     "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf",
 ]
+
+# Цвет суммы. Тот же тёплый янтарь, что у бегущей подсветки субтитра
+# (type.AMBER): плашка на числе и подсвеченное слово — это один приём
+# канала, и разными цветами они читаются как два разных оформления.
+AMBER_RGB = "0xFFC440"
+
+# Разовый поиск шрифта канала, см. _channel_font().
+_CHANNEL_FONT = {}
 
 # Стили анимации. Каждый — своя механика появления, а не своя длительность
 # одного и того же выезда.
@@ -83,7 +97,37 @@ UNIT_TOKENS = {
 UNIT_LOOKAHEAD = 2
 
 
+def _channel_font():
+    """
+    Путь к шрифту канала из type.py, если модуль вообще достаётся.
+
+    Импорт ленивый и разовый: editorial — отдельный пакет, и жёсткая
+    зависимость от соседнего модуля сломала бы его импорт в отрыве от
+    конвейера (так его импортирует смоук и так же будут импортировать
+    любые проверки). sys.path трогаем один раз, а не на каждую плашку.
+    """
+    if "path" in _CHANNEL_FONT:
+        return _CHANNEL_FONT["path"]
+    _CHANNEL_FONT["path"] = None
+    try:
+        import sys
+        root = str(Path(__file__).parent.parent)
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        import type as type_mod
+        p = type_mod.font_path()
+        if p.exists():
+            _CHANNEL_FONT["path"] = str(p)
+    except Exception:
+        pass
+    return _CHANNEL_FONT["path"]
+
+
 def font_path():
+    """Шрифт канала, иначе первый существующий системный."""
+    ch = _channel_font()
+    if ch:
+        return ch
     for p in FONT_CANDIDATES:
         if Path(p).exists():
             return p
@@ -306,6 +350,15 @@ def filter_chain(items, font=None, size_scale=1.0):
     return ",".join(p for p in parts if p)
 
 
+def _text_width(text: str, size: int, font) -> float:
+    """Ширина надписи настоящим шрифтом. Нет PIL или файла — оценка."""
+    try:
+        from PIL import ImageFont
+        return ImageFont.truetype(str(font), size).getlength(text)
+    except Exception:
+        return len(text) * size * 0.52
+
+
 def _one(it, t0, t1, place, font, size):
     style = it.get("style", "stamp")
     txt = _esc(it["text"])
@@ -320,7 +373,7 @@ def _one(it, t0, t1, place, font, size):
              f"if(gt(t\\,{t1 - fade_out:.3f})\\,"
              f"({t1:.3f}-t)/{fade_out}\\,1))")
 
-    base = (f"fontfile={font}:text='{txt}':fontcolor=white:"
+    base = (f"fontfile={font}:text='{txt}':fontcolor={AMBER_RGB}:"
             f"fontsize={size}:borderw=4:bordercolor=black@0.85:"
             f"shadowx=2:shadowy=2:shadowcolor=black@0.5:enable='{en}'")
 
@@ -348,8 +401,14 @@ def _one(it, t0, t1, place, font, size):
         bx = x.replace("W", "iw").replace("H", "ih")
         by = y.replace("W", "iw").replace("H", "ih")
         line_w = f"min(1\\,(t-{t0:.3f})/0.6)"
+        # Ширина подчёркивания — ЗАМЕР настоящего шрифта, а не
+        # «символов × 0.62». Множитель подбирался под DejaVu Serif; Oswald
+        # заметно у́же, и та же формула чертила линию в полтора раза длиннее
+        # самой надписи. Нет PIL — остаётся прежняя оценка, только с
+        # множителем поуже.
+        full = _text_width(it["text"], size, font)
         under = (f"drawbox=x='{bx}':y='{by}+{int(size * 1.15)}':"
-                 f"w='{int(size * 0.62)}*{len(it['text'])}*{line_w}':"
+                 f"w='{int(full)}*{line_w}':"
                  f"h=5:color=white@0.85:t=fill:enable='{en}'")
         return f"drawtext={base}:x={x}:y='{y}':alpha='{alpha}',{under}"
 
@@ -366,7 +425,7 @@ def _one(it, t0, t1, place, font, size):
             b = t0 + step * k if k < len(s) else t1
             layers.append(
                 f"drawtext=fontfile={font}:text='{_esc(s[:k])}':"
-                f"fontcolor=white:fontsize={size}:borderw=4:"
+                f"fontcolor={AMBER_RGB}:fontsize={size}:borderw=4:"
                 f"bordercolor=black@0.85:x={x}:y='{y}':"
                 f"alpha='{alpha}':"
                 f"enable='between(t\\,{a:.3f}\\,{b:.3f})'")

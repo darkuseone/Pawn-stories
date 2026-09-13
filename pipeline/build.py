@@ -1102,6 +1102,17 @@ def shift_marks(marks, boundaries, pause=CHAPTER_PAUSE):
         m = dict(m)
         m["start"] = round(m["start"] + _shift_at(m["start"], boundaries, pause), 3)
         m["end"] = round(m["end"] + _shift_at(m["end"], boundaries, pause), 3)
+        # Слова сдвигаются ВМЕСТЕ с предложением: по ним считается бегущая
+        # подсветка субтитра и в длинном ролике, и в шортсе. Оставить их на
+        # несдвинутой шкале — значит получить подсветку, уехавшую от голоса
+        # ровно на сумму пауз, при формально правильных границах фразы.
+        words = m.get("words")
+        if words:
+            m["words"] = [
+                {"w": w.get("w", ""),
+                 "s": round(float(w["s"]) + _shift_at(float(w["s"]), boundaries, pause), 3),
+                 "e": round(float(w["e"]) + _shift_at(float(w["e"]), boundaries, pause), 3)}
+                for w in words]
         out.append(m)
     return out
 
@@ -1522,8 +1533,20 @@ def join(group, out: Path, st, sparks, first=False, moments=None):
     cmd = (f'ffmpeg -y {ins} -filter_complex "{";".join(fc)}" -map "[out]" '
            f'-c:v libx264 -crf {st.crf} -preset {st.preset} '
            f'-pix_fmt yuv420p -an "{out}"')
-    subprocess.run(cmd, shell=True, check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # stderr БОЛЬШЕ НЕ ГЛУШИТСЯ НАСМЕРТЬ. Раньше здесь стояло
+    # stderr=DEVNULL с check=True, и падение группы склейки приходило в лог
+    # голым «returned non-zero exit status 1» — без имени фильтра, без
+    # отсутствующего файла, без строки ffmpeg. Именно это описано в шапке
+    # check_luts: «ffmpeg на отсутствующий .cube ругается уже внутри группы
+    # склейки, а stderr там заглушен». На успешном прогоне вывод
+    # по-прежнему никуда не идёт — печатается только хвост при падении.
+    r = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.PIPE)
+    if r.returncode != 0:
+        tail = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        raise SystemExit(
+            f"склейка группы {out.name} упала (код {r.returncode}). "
+            f"Последние строки ffmpeg:\n  " + "\n  ".join(tail[-12:]))
 
 
 def duck_points(st, story, pace):
@@ -1767,17 +1790,42 @@ def main(job_path):
     silent = tmp / "silent.mp4"
     render.concat_segments(segs, silent)
 
-    # Название выпуска — стекло поверх УЖЕ смонтированных первых кадров,
-    # без новой тишины в начале: крючок озвучки не режем. Дешёвый второй
-    # проход ASS, не покадровый ререндер.
+    # ── НАДПИСИ: ОДИН ПРОХОД ASS НА ВСЁ ──────────────────────────────
+    # Название выпуска, субтитры с бегущей подсветкой и карточка-итог —
+    # один файл ASS и одно перекодирование. Проход здесь был и раньше (им
+    # жглось только название), а libass рисует хоть одну надпись, хоть все
+    # три за те же деньги: второй такой же проход ради субтитров стоил бы
+    # ещё одного полного перекодирования получасового ролика.
+    #
+    # marks_final — шкала ГОТОВОГО ролика (с паузами глав). Субтитры
+    # считаются по ней, а не по кэшированным marks: иначе после первой же
+    # паузы подпись обгоняет голос на её длину.
     import type as type_mod
+    final_marks = shift_marks(marks, boundaries, CHAPTER_PAUSE) if boundaries else marks
     kicker, _sub = type_mod.cover_lines(job)
-    if kicker:
-        log(f"── название выпуска 0–{type_mod.OPENING_DUR:.1f} с: «{kicker}»")
-        opening_ass = tmp / "opening.ass"
-        type_mod.write_opening_ass(job, opening_ass, W, H)
+    want_subs = bool(job.get("burn_subs", True))
+    have_words = any(m.get("words") for m in final_marks)
+    if want_subs and not have_words:
+        log("  ! в marks.json нет тайм-кодов слов (кэш старше этой правки) — "
+            "субтитры в ролик не вжигаются; подсветка по оценке хуже, чем "
+            "её отсутствие. Лечится любым прогоном stage: assets")
+    recap, cta = type_mod.outro_lines(job)
+    if kicker or (want_subs and have_words) or recap or cta:
+        log(f"── надписи одним проходом ASS: "
+            f"название «{kicker}»"
+            + (", субтитры с подсветкой" if want_subs and have_words else "")
+            + (f", итог «{recap}»" if recap else ""))
+        overlay_ass = tmp / "overlay.ass"
+        type_mod.write_overlay_ass(job, overlay_ass, final_marks, total,
+                                   W, H, subs=want_subs and have_words)
         titled = tmp / "silent_titled.mp4"
-        render.burn_ass(silent, opening_ass, titled, type_mod.fontsdir())
+        # crf БЕРЁТСЯ ИЗ СТИЛЯ, а не из умолчания функции. Раньше здесь
+        # стоял зашитый crf 18: сегменты жались по st.crf (22 у канала), а
+        # последний проход перекодировал весь ролик заново на 18 — файл
+        # раздувался, и совет «подними crf в style_override» из проверки
+        # размера ниже не действовал вовсе.
+        render.burn_ass(silent, overlay_ass, titled, type_mod.fontsdir(),
+                        crf=st.crf)
         silent = titled
 
     log("── звук")
@@ -1843,7 +1891,6 @@ def main(job_path):
     # иначе субтитры после первой паузы обгоняли бы звук на её длину.
     # shorts.py режет куски из final.mp4 и читает этот файл, если он есть,
     # вместо assets/marks.json — тот остаётся кэшем на исходной шкале.
-    final_marks = shift_marks(marks, boundaries, CHAPTER_PAUSE) if boundaries else marks
     render.write_srt(final_marks, out / "subs.srt")
     (out / "marks_final.json").write_text(
         json.dumps(final_marks, ensure_ascii=False), encoding="utf-8")
