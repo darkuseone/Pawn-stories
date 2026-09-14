@@ -397,6 +397,42 @@ def main(job_path):
     print(f"   {Path(tc_font).name}, линейка {textcard_mod.RULE_COLOR}, "
           f"потолок {textcard_mod.MAX_CARDS} на ролик")
 
+    print("── комплект для выкладки")
+    import youtube as yt
+    fake_chaps = [(0.0, "one"), (300.0, "two"), (600.0, "three")]
+    card = yt.publish_card(job, fake_chaps, 1500.0, work.parent,
+                           work.parent / "out", "a, b")
+    need = ["ЗАГОЛОВОК", "ОПИСАНИЕ", "ИСТОЧНИКИ", "ХЕШТЕГИ", "ТЕГИ",
+            "НАЗВАНИЯ ШОРТСОВ", "ПРОМПТ ОБЛОЖКИ", "ПЕРВЫЙ КОММЕНТАРИЙ",
+            "ЗАПИСЬ ДЛЯ СООБЩЕСТВА", "ПРОМПТЫ КАРТИНОК ДЛЯ СООБЩЕСТВА"]
+    missing = [n for n in need if n not in card]
+    if missing:
+        raise SystemExit("в комплекте нет разделов: " + ", ".join(missing))
+    tags5 = yt.hashtags_five(job, yt.load_publish_rules())
+    # Три — жёсткий минимум: именно столько YouTube показывает НАД
+    # заголовком, и меньше трёх означает пустое место там, где у соседних
+    # роликов стоят ключевые слова. Пять — заказанная норма, но добрать их
+    # можно только из самой спецификации, поэтому четвёртый и пятый это
+    # заметка, а не стоп.
+    if len(tags5) < 3:
+        raise SystemExit(f"хештегов {len(tags5)}: {tags5}. Меньше трёх — "
+                         f"пустое место над заголовком. Добавь в "
+                         f"youtube.hashtags или youtube.tags")
+    if len(tags5) < 5:
+        print(f"   ! хештегов {len(tags5)} из 5 — добери youtube.hashtags")
+    st_titles = yt.short_titles(job, work.parent / "out", yt.load_publish_rules())
+    if len(st_titles) != 2 or not all(st_titles):
+        raise SystemExit(f"названий шортсов {st_titles} — нужно два непустых")
+    if any(len(t) > 100 for t in st_titles):
+        raise SystemExit("название шортса длиннее 100 символов — YouTube обрежет")
+    # Незакрытый плейсхолдер — это шаблон, уехавший к человеку сырым.
+    left = [m for m in ("{TITLE}", "{QUESTION}", "{SUM}", "{ITEM}", "{ERA}",
+                        "{CHAPTER}") if m in card]
+    if left:
+        raise SystemExit(f"в комплекте остались плейсхолдеры: {left}")
+    print(f"   {len(need)} разделов, 5 хештегов, 2 названия шортсов, "
+          f"{len(card)} символов")
+
     print("── план кадров")
     total = json.loads((work / "state.json").read_text())["total_audio"]
     av = channel.avoid()

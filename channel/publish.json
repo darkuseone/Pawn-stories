@@ -1,0 +1,40 @@
+{
+  "_": "Шаблоны комплекта для выкладки. Их читает pipeline/youtube.py и собирает youtube.txt: заголовок, описание с тайм-кодами, источники, пять хештегов, названия двух шортсов, промпт обложки, первый комментарий, запись для сообщества и два промпта картинок к ней. Правка «на будущее» сюда, а не в семь спецификаций — ровно так же, как правила CTR живут в channel/covers.json.",
+
+  "_без_модели": "Ни одного запроса к модели. Комплект пересобирается на каждой пересборке упаковки (stage: post), а их у ролика пять-десять: платный текст здесь означал бы плату за каждую правку обложки. Всё подставляется из спецификации — заголовок, вопрос петли, сумма, главы, ключевые слова.",
+
+  "_плейсхолдеры": "{TITLE} заголовок ролика, {QUESTION} вопрос открытой петли, {SUM} сумма с обложки (cover_sub), {ITEM} предмет находки, {ERA} год из темы, {CHAPTER} имя главы, {LINK} место под ссылку на ролик — её подставляет человек при выкладке.",
+
+  "first_comment": "{QUESTION}\n\nThe full story is in the video — timestamps are in the description if you want to jump straight to the payoff.\n\nGot something odd in a drawer at home? Tell me what it is. The strangest one goes in a future episode.",
+
+  "community_post": "{TITLE}\n\n{QUESTION}\n\nNew episode is up. Watch it here: {LINK}\n\nAnd the real question for you: if you found one of these in a box at a yard sale, would you know what you were holding — or would you sell it for pocket change like almost everyone else did?",
+
+  "community_prompts": [
+    "Square 1:1 social image, photoreal cinematic still. Extreme close-up of {ITEM} held in a bare hand against a dark neutral background, {ERA} materials and honest wear. One warm key light from the upper right, deep shadow falloff, shallow depth of field. Centered subject with clear breathing room at the edges — the frame is cropped to a circle in some feeds. No text, no letters, no numbers, no logos, no watermark: captions are added separately.",
+    "Square 1:1 social image, photoreal cinematic still. A DIFFERENT angle from the first: {ITEM} lying on worn wood among ordinary household clutter — keys, buttons, a folded receipt — so it reads as something overlooked rather than displayed. {ERA} styling. Soft overhead lamp light, muted warm palette, one bright accent on the object itself. No text, no letters, no numbers, no logos, no watermark."
+  ],
+
+  "short_title": "{QUESTION} #Shorts",
+  "short_title_alt": "{SUM} #Shorts",
+
+  "_источники": "Код источника -> как он подписывается в описании. Подписываются РЕАЛЬНО использованные источники материала: их видно в манифестах скачивания (work/<id>/assets/*/_manifest.json), а если манифестов нет — в объявленных photo_sources / video_sources спецификации. Выдумывать ссылки на исследования нельзя: в спецификации их нет, а подпись «по материалам X» без X хуже отсутствующей.",
+  "sources": {
+    "wikimedia": "Wikimedia Commons — commons.wikimedia.org",
+    "wikimedia_video": "Wikimedia Commons — commons.wikimedia.org",
+    "met": "The Metropolitan Museum of Art, Open Access — metmuseum.org",
+    "artic": "Art Institute of Chicago, Open Access — artic.edu",
+    "cleveland": "The Cleveland Museum of Art, Open Access — clevelandart.org",
+    "loc": "Library of Congress — loc.gov",
+    "archive_org": "Internet Archive — archive.org",
+    "archive.org": "Internet Archive — archive.org",
+    "pexels": "Pexels — pexels.com",
+    "pixabay": "Pixabay — pixabay.com",
+    "magnific": "Magnific — magnific.ai",
+    "xai": "AI-generated imagery (xAI)",
+    "mock": "синтетика локального прогона (в боевой ролик не попадает)"
+  },
+  "sources_note": "Footage and stills are used under the terms of each source listed above. AI-generated imagery is used only for scenes no archive or stock library covers.",
+
+  "_хештеги": "Ровно пять: YouTube показывает над заголовком первые три, остальные живут в поиске. Берутся из youtube.hashtags, не хватает — добираются из youtube.tags.",
+  "hashtag_count": 5
+}
