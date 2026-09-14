@@ -37,11 +37,7 @@
     "The listing appeared on eBay on August the 2nd, 2011, posted by a user going by the name shinsnk, based in the small Catalan town of Hostalric in Spain. The item: an original Japanese Sega Mega Drive Tetris cartridge, autographed by Alexey Pajitnov, described by the seller as essentially unique. The asking price: one million American dollars, listed as a straight buy-it-now, not an opening bid for others to haggle down.\n\nAccording to reporting from the time, the seller had bought the cartridge roughly four years earlier for eleven thousand euros — a little under sixteen thousand dollars at the exchange rate then — and had since turned down offers as high as twenty thousand dollars from other collectors before deciding to list it publicly at a price nobody could quietly negotiate around. Gaming outlets picked the story up almost immediately, most of them landing somewhere between genuine fascination and open disbelief that anyone would actually pay seven figures for a single game cartridge, however rare. Guinness World Records eventually recognized the listing outright, naming it the most valuable Tetris video game on record — a title that, notably, describes the asking price of the listing rather than a confirmed final sale amount.\n\nAnd that's the honest, slightly unsatisfying place where this particular thread of the story runs out. Guinness's own record states the listing was eventually marked sold. It does not state, anywhere I could verify, what the buyer actually paid for it. No contemporary report I found names a buyer, confirms a closing price, or documents where the cartridge physically ended up afterward. It's entirely possible it sold for the full million. It's also entirely possible — maybe even more likely, given how these listings tend to actually resolve — that a private, undisclosed offer well under that number is what actually closed the deal, the way high six-figure asking prices on rare collectibles often do settle in practice. I'm not going to manufacture a tidy ending here that the record itself doesn't support.\n\nCoverage from the time captures the tone well. Some outlets treated it as a straightforward collector's-market headline; others couldn't quite hide their disbelief that a single cartridge, however rare, was being priced somewhere in the range of a house. What almost every writeup agreed on, though, was the basic shape of the story underneath the number: a game Sega itself tried to erase, surfacing seven years after that failed recall, priced at a figure meant to reflect not what it would cost to replace — nothing could replace it — but what it might take to convince someone who already owned one of the last surviving copies to actually let it go.",
     "So here's what this story actually is, once you strip away the headline number. A game that was never supposed to exist commercially in the first place — finished, packaged, and then deliberately destroyed by its own manufacturer over a legal fight it lost no part in — became, purely because of how few copies survived that destruction, one of the single most valuable pieces of plastic in the entire video game hobby. Not because it's a particularly good version of Tetris. By every account, it plays roughly like Tetris always plays. Its value has nothing to do with the game underneath the label and everything to do with the fact that Sega itself tried to make sure you'd never be able to buy one.\n\nWhat we can say with real confidence: somewhere between six and ten cartridges are believed to exist. Ordinary surviving copies, unsigned, have documented sales north of sixteen thousand dollars. And one specific copy, signed by Tetris's own creator, was listed for a million dollars in August of 2011 and was, per Guinness World Records, eventually marked sold — with the actual closing price never publicly confirmed anywhere I could find. That's the complete, honest version. Not a clean seven-figure payday with a name and a date attached to it, but a genuinely strange piece of corporate history that a small handful of collectors happen to be sitting on right now, mostly out of public view.\n\nIf there's a takeaway here that isn't just \"check your old game collection\" — though, for what it's worth, it's genuinely worth doing that too — it's this: sometimes the rarest thing in a market isn't the object somebody tried hardest to protect. It's the one somebody tried hardest to erase, and simply didn't quite manage to finish the job.\n\nThere's a pattern worth noticing here, one this channel keeps circling back to in different forms: the things that end up worth the most are rarely the ones somebody deliberately set aside because they already knew what they had. More often, value shows up afterward, attached to whatever happened to survive an accident, a mistake, or — in this particular case — a company's own attempt to make sure nothing survived at all. Sega wasn't trying to create a collector's item in 1989. It was trying to cut its losses quietly and move on. The fact that a handful of cartridges slipped through anyway is the entire reason this story exists thirty-five years later."
   ],
-  "image_prompts": [
-    "A single red Sega Mega Drive game cartridge sitting alone on a dusty wooden shelf inside an otherwise empty storage crate, one shaft of overhead light picking it out of the darkness, the other slots on the shelf visibly empty, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
-    "A court gavel frozen mid-strike above a small stack of video game cartridges on a dark wooden desk, dramatic side lighting, slightly ominous, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9",
-    "Extreme macro photograph of a hand-signed autograph in black marker across the label of a red video game cartridge, dramatic raking light picking out the ink texture, hyperrealistic photograph, cinematic lighting, shallow depth of field, 50mm lens, natural color grading, fine detail, 8k, photojournalistic composition, 16:9"
-  ],
+  "image_prompts": [],
   "footage_queries": [
     "online auction bidding laptop screen",
     "hands counting cash dollars closeup",
@@ -60,7 +56,10 @@
     "gloved hands holding rare collectible",
     "typing laptop keyboard closeup",
     "package shipping box mailing",
-    "vintage electronics store interior"
+    "vintage electronics store interior",
+    "single object spotlight dark background",
+    "empty shelf warehouse dusty spotlight",
+    "hand signing autograph marker closeup"
   ],
   "archive_queries": [
     "1980s consumer electronics advertisement",
@@ -72,15 +71,16 @@
     "vintage typewriter office photograph",
     "law library historical photograph",
     "US patent office historical photo",
-    "1980s American technology fair"
+    "1980s American technology fair",
+    "empty store shelf vintage photograph"
   ],
   "reject": {
     "clip": [],
     "arch": []
   },
   "style_override": {
-    "_почему": "xAI недоступен на момент прогона: доля генерации нарочно занижена, а доля стока в начале и по телу поднята — ролик держится на реальном футаже.",
-    "generated_share": 0.1,
+    "_почему": "На xAI закончились кредиты (ключ есть, баланс нулевой — вызовы будут падать, а не просто отсутствовать). image_prompts поэтому пустой и generated_share=0: код assets.py безусловно пытается сгенерировать ВСЕ image_prompts, а batch-режим при неудаче может опрашивать xAI до 90 минут, прежде чем сдаться. Вместо ожидаемого падения — ролик держится целиком на настоящем стоке и архиве, запросы под три ранее генерируемые сцены (пустая полка, автограф крупным планом) добавлены в footage_queries/archive_queries. Доля стока в начале и по телу поднята.",
+    "generated_share": 0,
     "intro_clip_share": 0.75,
     "body_clip_every_n_shots": 3
   },
