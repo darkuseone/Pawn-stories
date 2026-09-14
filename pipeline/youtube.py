@@ -164,10 +164,222 @@ def description(job, chaps, total):
     if y.get("description_notes"):
         parts += ["", y["description_notes"].strip()]
     parts += ["", f"{lab['runtime']}: {stamp(total)}"]
-    hashtags = as_list(y.get("hashtags"), "hashtags")
+    # Хештеги в описании — ТЕ ЖЕ ПЯТЬ, что в отдельном разделе комплекта.
+    # Раньше описание печатало сырое youtube.hashtags (три штуки), а
+    # раздел — добранные до пяти: человек копировал два разных набора из
+    # одного файла и справедливо не понимал, какой из них верный.
+    hashtags = hashtags_five(job, load_publish_rules())
     if hashtags:
         parts += ["", " ".join(hashtags)]
     return "\n".join(parts)
+
+
+# ─────────────────────── КОМПЛЕКТ ДЛЯ ВЫКЛАДКИ ───────────────────────
+#
+# youtube.txt — это ВСЁ, что человек копирует в формы YouTube при выкладке:
+# заголовок, описание с тайм-кодами, источники, пять хештегов, теги,
+# названия двух шортсов, промпт обложки, первый комментарий, запись для
+# сообщества и два промпта картинок к ней. Раньше здесь были только первые
+# четыре пункта, остальное человек сочинял руками на каждый ролик.
+#
+# НИ ОДНОГО ЗАПРОСА К МОДЕЛИ. Упаковка пересобирается на каждой правке
+# обложки (stage: post), а их у ролика пять-десять: платный текст здесь
+# означал бы плату за каждую такую пересборку. Всё подставляется из
+# спецификации по шаблонам из channel/publish.json — по той же схеме, по
+# какой covers.py собирает промпты из channel/covers.json.
+#
+# Спецификация выигрывает: youtube.first_comment, youtube.community_post,
+# youtube.community_prompts, youtube.short_titles, youtube.sources
+# перекрывают шаблон целиком.
+
+PUBLISH_RULES = Path(__file__).parent.parent / "channel" / "publish.json"
+
+
+def load_publish_rules() -> dict:
+    """Шаблоны комплекта. Ключи с подчёркиванием — комментарии, не данные."""
+    if not PUBLISH_RULES.exists():
+        return {}
+    try:
+        data = json.loads(PUBLISH_RULES.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+    return {k: v for k, v in data.items() if not str(k).startswith("_")}
+
+
+def _fill(template: str, job, extra=None) -> str:
+    """Плейсхолдеры шаблона. Неизвестный ключ остаётся как есть."""
+    import covers
+    y = job.get("youtube") or {}
+    kicker, sub = type_mod.cover_lines(job)
+    item, _scale = covers.visual_hooks(job)
+    vals = {
+        "{TITLE}": (y.get("title") or "").strip(),
+        "{QUESTION}": ((job.get("open_loop") or {}).get("question") or "").strip(),
+        "{SUM}": sub or kicker,
+        "{ITEM}": item,
+        "{ERA}": covers._era_of(job),
+        "{CHAPTER}": (y.get("chapters") or [""])[0],
+        "{LINK}": "<ссылка на ролик>",
+    }
+    vals.update(extra or {})
+    out = template or ""
+    for k, v in vals.items():
+        out = out.replace(k, str(v))
+    return out.strip()
+
+
+def hashtags_five(job, rules) -> list:
+    """
+    Ровно пять хештегов: YouTube показывает над заголовком первые три,
+    остальные работают в поиске. Не хватает своих — добираются из тегов.
+    """
+    want = int(rules.get("hashtag_count", 5))
+    y = job.get("youtube") or {}
+    out = []
+    for h in as_list(y.get("hashtags"), "hashtags"):
+        h = h.strip()
+        if not h:
+            continue
+        h = h if h.startswith("#") else "#" + h
+        if h.lower() not in [x.lower() for x in out]:
+            out.append(h)
+    for t in as_list(y.get("tags"), "tags"):
+        if len(out) >= want:
+            break
+        tag = "#" + "".join(w.capitalize() for w in re.split(r"[^\w]+", t) if w)
+        if len(tag) > 1 and tag.lower() not in [x.lower() for x in out]:
+            out.append(tag)
+    return out[:want]
+
+
+def sources_block(job, work: Path, rules) -> str:
+    """
+    Источники материала — РЕАЛЬНО использованные, а не список из головы.
+
+    Сначала манифесты скачивания (там у каждого файла записан источник),
+    если их нет — объявленные в спецификации photo_sources / video_sources.
+    Ссылки на исследования сюда не подставляются: в спецификации их нет, а
+    подпись «по материалам X» без самого X хуже отсутствующей. Для них
+    есть необязательное поле youtube.sources — что в нём лежит, то и
+    печатается первым.
+    """
+    y = job.get("youtube") or {}
+    names = rules.get("sources") or {}
+    lines = []
+    own = as_list(y.get("sources"), "sources") if y.get("sources") else []
+    lines += [f"- {s}" for s in own if str(s).strip()]
+
+    used = []
+    for folder in ("footage", "archive"):
+        man = work / "assets" / folder / "_manifest.json"
+        if not man.exists():
+            continue
+        try:
+            rows = json.loads(man.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        for row in rows:
+            src = str(row.get("src") or "").strip()
+            if src and src not in used:
+                used.append(src)
+    if not used:
+        used = [str(s) for s in (job.get("photo_sources") or [])]
+        used += [str(s) for s in (job.get("video_sources") or []) if s not in used]
+    for src in used:
+        label = names.get(src) or names.get(src.replace(".", "_")) or src
+        if f"- {label}" not in lines:
+            lines.append(f"- {label}")
+    if (job.get("image_prompts") or job.get("fill_prompts")):
+        ai = names.get("xai", "AI-generated imagery")
+        if f"- {ai}" not in lines:
+            lines.append(f"- {ai}")
+    note = (rules.get("sources_note") or "").strip()
+    if note:
+        lines += ["", note]
+    return "\n".join(lines)
+
+
+def short_titles(job, out: Path, rules) -> list:
+    """
+    Названия двух шортсов.
+
+    Спецификация выигрывает (youtube.short_titles). Иначе берётся вопрос
+    ТОГО блока, из которого шортс реально нарезан: shorts.py пишет это в
+    out/shorts.json. Нет файла (шортсы ещё не резались или упали) —
+    остаются вопросы из open_loop.questions по порядку, потом общий.
+    """
+    y = job.get("youtube") or {}
+    own = as_list(y.get("short_titles"), "short_titles") if y.get("short_titles") else []
+    if len(own) >= 2:
+        return [str(t).strip() for t in own[:2]]
+
+    loop = job.get("open_loop") or {}
+    per_block = {str(k): str(v).strip()
+                 for k, v in (loop.get("questions") or {}).items() if str(v).strip()}
+    default_q = (loop.get("question") or "").strip()
+
+    questions = []
+    cut = out / "shorts.json"
+    if cut.exists():
+        try:
+            for row in json.loads(cut.read_text(encoding="utf-8")):
+                q = str(row.get("question") or "").strip()
+                questions.append(q or default_q)
+        except (ValueError, OSError):
+            questions = []
+    if not questions:
+        questions = [per_block[k] for k in sorted(per_block, key=lambda x: int(x))]
+    questions = [q for q in questions if q] or ([default_q] if default_q else [])
+
+    tpl = rules.get("short_title") or "{QUESTION} #Shorts"
+    alt = rules.get("short_title_alt") or "{SUM} #Shorts"
+    titles = [_fill(tpl, job, {"{QUESTION}": q}) for q in questions[:2]]
+    while len(titles) < 2:
+        titles.append(_fill(alt, job))
+    # YouTube режет заголовок на 100 символах.
+    return [t if len(t) <= 100 else t[:97].rstrip() + "…" for t in titles[:2]]
+
+
+def publish_card(job, chaps, total, work: Path, out: Path, tags: str) -> str:
+    """Весь комплект одним текстом. Порядок — как человек заполняет формы."""
+    import covers
+    rules = load_publish_rules()
+    y = job.get("youtube") or {}
+    parts = []
+
+    def block(head, body):
+        body = (body or "").strip()
+        if body:
+            parts.append(f"───── {head} ─────\n{body}")
+
+    block("ЗАГОЛОВОК", y.get("title", ""))
+    block("ЗАПАСНЫЕ ЗАГОЛОВКИ",
+          "\n".join(f"- {t}" for t in y.get("title_alternatives", [])))
+    block("ОПИСАНИЕ (с тайм-кодами)", description(job, chaps, total))
+    block("ИСТОЧНИКИ", sources_block(job, work, rules))
+    block(f"ХЕШТЕГИ ({len(hashtags_five(job, rules))})",
+          " ".join(hashtags_five(job, rules)))
+    block(f"ТЕГИ ({len(tags)} из {TAGS_LIMIT} символов)", tags)
+    block("НАЗВАНИЯ ШОРТСОВ",
+          "\n".join(f"{i}. {t}" for i, t in
+                    enumerate(short_titles(job, out, rules), 1)))
+    try:
+        prompts = covers.art_prompts(job, n=covers.COVER_COUNT)
+        block("ПРОМПТ ОБЛОЖКИ",
+              "\n\n".join(f"[вариант {chr(64 + i)}]\n{p}"
+                          for i, p in enumerate(prompts, 1)))
+    except Exception as e:                       # промпт — не повод ронять выкладку
+        block("ПРОМПТ ОБЛОЖКИ", f"(собрать не вышло: {e})")
+    block("ПЕРВЫЙ КОММЕНТАРИЙ",
+          _fill(y.get("first_comment") or rules.get("first_comment", ""), job))
+    block("ЗАПИСЬ ДЛЯ СООБЩЕСТВА",
+          _fill(y.get("community_post") or rules.get("community_post", ""), job))
+    cprompts = (y.get("community_prompts")
+                or rules.get("community_prompts") or [])
+    block("ПРОМПТЫ КАРТИНОК ДЛЯ СООБЩЕСТВА",
+          "\n\n".join(f"[{i}]\n{_fill(str(p), job)}"
+                      for i, p in enumerate(cprompts[:2], 1)))
+    return "\n\n".join(parts) + "\n"
 
 
 def thumbnail(video: Path, out: Path, at: float, title: str, style="lower_left"):
@@ -268,11 +480,7 @@ def main(job_path):
 
     card = out / "youtube.txt"
     card.write_text(
-        "ЗАГОЛОВОК\n" + y["title"] +
-        "\n\nЗАПАСНЫЕ ЗАГОЛОВКИ\n" +
-        "\n".join(f"- {t}" for t in y.get("title_alternatives", [])) +
-        "\n\nОПИСАНИЕ\n" + description(job, chaps, total) +
-        f"\n\nТЕГИ ({len(tags)} из {TAGS_LIMIT} символов)\n" + tags + "\n",
+        publish_card(job, chaps, total, Path("work") / job["id"], out, tags),
         encoding="utf-8")
 
     # Секунда превью обрезается длиной ролика. thumbnail_at пишется под

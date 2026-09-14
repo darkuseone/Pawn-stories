@@ -25,5 +25,8 @@
     "wide gallery",
     "establishing shot of a room",
     "crowded auction house interior as the subject"
-  ]
+  ],
+  "_шаблон": "Шаблон сюжета с плейсхолдерами. {ITEM} — сам предмет находки (ключевое слово или глава), {ERA} — эпоха/год, если он есть в теме. СУММЫ В ШАБЛОНЕ НЕТ СОЗНАТЕЛЬНО: канал давно решил, что буквы и цифры на обложке рисует PIL шрифтом канала, а не модель — она путает цифры и дописывает лишние нули. Сумма живёт в cover_sub и попадает на обложку отрисовкой, а не генерацией. Плейсхолдер, который модель нарисует неправильно, хуже отсутствующего.",
+  "scene_template_gap": "Hyperrealistic 16:9 YouTube thumbnail, cinematic still. CURIOSITY GAP: {ITEM} shown as ABSENCE or concealment — sealed, wrapped, empty, shut, or missing from where it should be. That absence is the single giant subject and fills the entire right half of the frame in an extreme close crop. {ERA} styling in the materials and wear, no props beyond the subject itself. Single warm key light from the right, deep black falloff into the empty left side.",
+  "scene_template_scale": "Hyperrealistic 16:9 YouTube thumbnail, cinematic still. A DIFFERENT story from the first cover, not another angle of the same room: extreme macro of {ITEM} itself filling the entire right half — surface texture, edge wear and maker's marks readable — or white-gloved hands holding it, with any gavel, paddle or price tag tiny and out of focus far behind. {ERA} materials. Scale and deal, not atmosphere."
 }

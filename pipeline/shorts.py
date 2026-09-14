@@ -87,22 +87,28 @@ FPS = 30
 SHORT_MIN = 24.0
 SHORT_MAX = 52.0
 
-# Шапка с вопросом: плашки жмутся к тексту (см. header_layout), но
-# начинаются с этого отступа от края кадра.
+# Шапка с вопросом: блок жмётся к тексту (см. header_layout), но
+# начинается с этого отступа от края кадра.
 BOX_MARGIN = 36
 
 # Субтитры кусками фразы, а не по одному слову.
 SUB_MAX_CHARS = 20
 SUB_MAX_LINES = 2
-SUB_SIZE = 70
+# Кегль 140, а не 70 — вдвое, как и в длинном ролике: подпись в шортсе
+# читают с телефона в ленте, и мелкая там проигрывает всему остальному в
+# кадре. fit_size ниже ужмёт его обратно, если строка не влезает.
+SUB_SIZE = 140
 SUB_MARGIN = 60            # поля стиля SUB, они же предел ширины строки
 
-# ГДЕ СТОЯТ СУБТИТРЫ — 0.66 высоты, а не 0.74. Ниже нельзя: в длинный
-# ролик ВЖЖЕНЫ плашки с числами (editorial/textcard.py, PLACES), они
-# занимают полосу 0.760-0.816 высоты кадра, и доли по высоте при crop+scale
-# в 9:16 сохраняются. На 0.74 субтитр наезжал на плашку прямо в кадре —
-# поймано на готовом шортсе ff-ep06, где «Under the treasure trove law
-# that» легло поверх «1996».
+# ГДЕ СТОЯТ СУБТИТРЫ ШОРТСА — 0.66 высоты, а не 0.74. Ниже нельзя: в
+# длинный ролик вжжены его собственные субтитры (type.sub_long_y — при
+# кегле 116 это полоса примерно 0.79-0.93 высоты), и при crop+scale в 9:16
+# доли по высоте сохраняются, то есть чужая строка лезет в кадр шортса
+# поверх его собственной. То же самое раньше случалось с карточками на
+# числах: на 0.74 субтитр наезжал на карточку прямо в кадре, поймано на
+# готовом шортсе ff-ep06, где «Under the treasure trove law that» легло
+# поверх «1996». Карточка с тех пор уехала в верхнюю треть
+# (editorial/textcard.CARD_Y), а низ остался за субтитрами.
 #
 # Выше 0.62 тоже не стоит: низ кадра у Shorts закрывает интерфейс YouTube
 # (заголовок и кнопки), а слишком высокий субтитр лезет к шапке с вопросом.
@@ -457,18 +463,37 @@ def header_layout(question: str, style: str = "") -> dict:
                 intro_cy=int(H * 0.42), block_cy=block_cy)
 
 
-def build_ass(subs, layout: dict, out: Path):
+def karaoke_ready(marks, lo, hi) -> bool:
+    """Есть ли ИЗМЕРЕННЫЕ тайм-коды слов у всех предложений куска."""
+    part = marks[lo:hi + 1]
+    return bool(part) and all(m.get("words") for m in part)
+
+
+def build_ass(subs, layout: dict, out: Path, word_marks=None,
+              t0: float = 0.0, t1: float = 0.0):
     """
     Шапка и субтитры: Oswald, белый, чёрная обводка, без стекла и без жёлтого.
 
     Вступление вопроса в libass: слой с сильным \\blur гаснет, резкий слой
     \\fad + масштаб 118%→100%, вспышка обводки, затем \\move наверх.
     Не Remotion, не deshake, не второй Ken Burns.
+
+    ПОДСВЕТКА ЗАЛИВКОЙ. word_marks — предложения с измеренными тайм-кодами
+    слов (assets.words_between по посимвольному выравниванию ElevenLabs).
+    Строка показывается целиком приглушённой, и каждое слово к своему
+    тайм-коду выходит на полную яркость И ТАК И ОСТАЁТСЯ (type.karaoke_line)
+    — та же механика, что в длинном ролике, иначе шортс перестаёт читаться
+    как его кусок. Нет измеренных слов — строка выводится без заливки:
+    подпись есть всегда, выдуманных тайм-кодов слов нет.
     """
     q_size = layout["size"] or 1
     all_lines = [l for _, _, c in subs for l in wrap(c, SUB_MAX_CHARS)]
     sub_size = fit_size(all_lines, W - 2 * SUB_MARGIN, SUB_SIZE, floor=34)
+    # Заливка субтитра — тот же #f5f5f7, что в длинном ролике (type.SUB_FULL);
+    # приглушённую ступень задаёт \\1a внутри события. Шапка с вопросом
+    # остаётся чисто белой: она не заливается и должна быть ярче подписи.
     white, black = "&H00FFFFFF", "&H00000000"
+    sub_fill = "&H00" + type_mod.SUB_FULL.strip("&H&")
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -480,7 +505,7 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: QGLOW,{FONT},{q_size},{white},{black},&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,40,40,40,1
 Style: Q,{FONT},{q_size},{white},{black},&H00000000,-1,0,0,0,100,100,0,0,1,{OUTLINE},0,5,40,40,40,1
-Style: SUB,{FONT},{sub_size},{white},{black},&H00000000,-1,0,0,0,100,100,0,0,1,7,0,5,{SUB_MARGIN},{SUB_MARGIN},60,1
+Style: SUB,{FONT},{sub_size},{sub_fill},{black},&H00000000,-1,0,0,0,100,100,0,0,1,7,0,5,{SUB_MARGIN},{SUB_MARGIN},60,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -503,11 +528,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f"\\fscx118\\fscy118\\t(0,{PUNCH_MS},\\fscx100\\fscy100)"
             f"\\bord{OUTLINE}\\t(120,200,\\bord16)\\t(200,360,\\bord{OUTLINE})"
             f"\\fad(90,0)}}" + text)
-    for s, e, c in subs:
-        rows.append(
-            f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
-            f"{{\\pos({W//2},{int(H*SUB_Y)})}}"
-            + "\\N".join(ass_escape(l) for l in wrap(c, SUB_MAX_CHARS)))
+    kara = []
+    if word_marks:
+        kara = type_mod.sub_events(word_marks, t0, t1 or 10 ** 9, sub_size,
+                                   W - 2 * SUB_MARGIN, style="SUB",
+                                   max_lines=SUB_MAX_LINES)
+    if kara:
+        # Шортс центрируется, а не выключается влево, как длинный: кадр
+        # 1080 в ширину, и колонка с ровным левым краем в нём читается как
+        # съехавшая вбок подпись, а не как выключка.
+        for s, e, _style, body, enter in kara:
+            rows.append(
+                f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
+                + type_mod.sub_tag(W // 2, int(H * SUB_Y), an=5, enter=enter)
+                + body)
+    else:
+        for s, e, c in subs:
+            rows.append(
+                f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
+                f"{{\\pos({W//2},{int(H*SUB_Y)})}}"
+                + "\\N".join(ass_escape(l) for l in wrap(c, SUB_MAX_CHARS)))
     out.write_text(head + "\n".join(rows) + "\n", encoding="utf-8")
     return out
 
@@ -668,10 +708,14 @@ def main(job_path, want=2):
         question = per_block.get(str(beat.block), default_question)
         layout = header_layout(question)
         subs = lines_with_times(marks, lo, hi, t0)
-        ass = build_ass(subs, layout, out / f"short_{n}.ass")
+        kara_ok = karaoke_ready(marks, lo, hi)
+        ass = build_ass(subs, layout, out / f"short_{n}.ass",
+                        word_marks=marks[lo:hi + 1] if kara_ok else None,
+                        t0=t0, t1=t1)
         dst = out / f"short_{n}.mp4"
         log(f"── шортс {n}: {t0:.1f}–{t1:.1f} с ({t1-t0:.1f} с), "
             f"доля «{beat.kind}», блок {beat.block}, субтитров {len(subs)}, "
+            f"{'подсветка по замеру' if kara_ok else 'БЕЗ подсветки (нет слов в marks)'}, "
             f"вопрос: {question or '(нет)'}")
         render_short(final, t0, t1, ass, dst,
                      crf=int((job.get("style_override") or {}).get("crf", 20)))

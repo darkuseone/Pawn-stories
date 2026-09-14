@@ -84,3 +84,170 @@ def load_job(path) -> dict:
     if not d:
         return job
     return merge(d, job)
+
+
+# ─────────────────────── ПРОВЕРКА ПОЛЕЙ ───────────────────────
+#
+# ЗАЧЕМ ОТДЕЛЬНАЯ ПРОВЕРКА, КОГДА ЕСТЬ style_override
+# ---------------------------------------------------
+# Неизвестное поле ВНУТРИ style_override роняет прогон (build.py,
+# apply_style_override) — и это правильно. Но верхний уровень спецификации
+# не проверялся вовсе, и опечатка там ничего не роняет: поле просто никто
+# не читает, а ролик собирается на умолчании. Ровно так на канале уже
+# живёт тихая ошибка: ЧЕТЫРЕ спецификации задают
+#
+#     "voice_settings": {"similarity_boost": 0.75}
+#
+# — имя из документации ElevenLabs, — а build_voice читает vs["similarity"]
+# и на отсутствие ключа честно берёт 0.78. Голос озвучен НЕ ТЕМИ
+# настройками, деньги за него уже списаны, и в логе об этом ни строки.
+# Тот же класс, что и знаменитый инцидент с невалидными полями: проверять
+# надо ДО того, как потрачено, а не после.
+#
+# Поэтому список ключей закрытый. Новое поле в спецификации — строка сюда;
+# это дешевле одного прогона, потраченного на молча проигнорированную
+# настройку.
+
+KNOWN_TOP_LEVEL = {
+    # что делает ролик ЭТИМ роликом
+    "id", "script_blocks", "topic", "youtube", "open_loop",
+    # материал
+    "image_prompts", "image_model", "footage_queries", "archive_queries",
+    "graphic_queries", "fill_prompts", "fill_limit", "reject",
+    "trusted_sources", "top_up_budget", "material_overshoot",
+    "photo_sources", "video_sources",
+    # голос
+    "voice_settings", "voice_id",
+    # отбраковка
+    "vet_vision", "vet_model",
+    # картинка и звук
+    "style_override", "lut", "archive_lut", "music", "bed_gain_db",
+    "recent_luts", "recent_openings",
+    # надписи длинного ролика
+    "burn_subs", "outro_cta",
+    # генерация
+    "batch", "magnific_image_share", "magnific_image_models",
+    "magnific_video_share", "magnific_video_gen_enabled",
+    "cover_text_by_model",
+}
+
+# Настройки голоса. similarity_boost — имя ИЗ API ElevenLabs, и в
+# спецификациях оно встречается чаще «правильного»: его подставляет любой
+# пример из документации. Читаются оба (assets.build_voice), но сказать об
+# этом надо — иначе два имени в семи файлах разъедутся молча.
+VOICE_KEYS = {"stability", "similarity", "similarity_boost", "style",
+              "use_speaker_boost", "speed"}
+
+LIST_FIELDS = ("script_blocks", "image_prompts", "footage_queries",
+               "archive_queries", "graphic_queries", "fill_prompts",
+               "photo_sources", "video_sources", "trusted_sources",
+               "recent_luts", "recent_openings")
+
+
+def check(job: dict) -> tuple[list[str], list[str]]:
+    """
+    Проверка спецификации ДО первых денег. Возвращает (стоп, заметки).
+
+    «Стоп» — то, из-за чего прогон нельзя начинать: опечатка в имени поля
+    означает молча неработающую настройку, а этап 1 стоит озвучки и
+    генерации целиком. «Заметки» печатаются и ничего не роняют.
+
+    Цветокоры проверяются здесь же по файлам в assets/luts: check_luts()
+    в build.py делает то же самое, но на два этапа позже — когда голос уже
+    оплачен.
+    """
+    stop, note = [], []
+
+    unknown = sorted(k for k in job
+                     if not str(k).startswith("_") and k not in KNOWN_TOP_LEVEL)
+    if unknown:
+        stop.append(
+            "неизвестные поля верхнего уровня: " + ", ".join(unknown) +
+            ". Опечатка здесь ничего не роняет — поле просто никто не "
+            "прочитает, и ролик соберётся на умолчании. Известные поля: " +
+            ", ".join(sorted(KNOWN_TOP_LEVEL)))
+
+    for name in LIST_FIELDS:
+        val = job.get(name)
+        if val is not None and not isinstance(val, list):
+            stop.append(f"{name}: {type(val).__name__} вместо списка — "
+                        f"строка разберётся по буквам, а не по запятым")
+
+    vs = job.get("voice_settings")
+    if vs is not None:
+        if not isinstance(vs, dict):
+            stop.append("voice_settings должно быть объектом")
+        else:
+            bad = sorted(k for k in vs if k not in VOICE_KEYS)
+            if bad:
+                stop.append(
+                    "voice_settings: неизвестные ключи " + ", ".join(bad) +
+                    ". Их никто не прочитает, а озвучка уже платная. "
+                    "Допустимо: " + ", ".join(sorted(VOICE_KEYS)))
+            if "similarity_boost" in vs and "similarity" not in vs:
+                note.append(
+                    "voice_settings.similarity_boost — имя из API ElevenLabs; "
+                    "канал зовёт это поле similarity. Значение подхватывается, "
+                    "но лучше свести к одному имени")
+            for k in ("stability", "similarity", "similarity_boost", "style"):
+                v = vs.get(k)
+                if v is not None and not (0.0 <= float(v) <= 1.0):
+                    stop.append(f"voice_settings.{k}={v} вне 0..1")
+
+    luts = ROOT / "assets" / "luts"
+    ov = job.get("style_override") or {}
+    named = [(k, job.get(k)) for k in ("lut", "archive_lut") if job.get(k)]
+    named += [(f"style_override.{k}", ov[k])
+              for k in ("lut", "archive_lut") if ov.get(k)]
+    have = sorted(p.stem for p in luts.glob("*.cube")) if luts.exists() else []
+    for where, name in named:
+        if have and name not in have:
+            stop.append(f"{where}: нет цветокора {name!r}. Есть: " +
+                        ", ".join(have))
+
+    loop = job.get("open_loop") or {}
+    per_block = loop.get("questions")
+    if per_block is not None:
+        if not isinstance(per_block, dict):
+            stop.append("open_loop.questions: нужна карта "
+                        "{\"номер_блока\": \"вопрос\"}, ключ строкой")
+        else:
+            bad = [k for k in per_block if not str(k).lstrip("-").isdigit()]
+            if bad:
+                stop.append(f"open_loop.questions: ключи {bad} — не номера "
+                            f"блоков")
+
+    # Сумма находки на обложке. Это не придирка к оформлению: то же поле
+    # уходит в карточку-итог в конце ролика (type.outro_lines), и без
+    # цифры концовка остаётся без рекапа. Заметка, а не стоп: ролик без
+    # суммы бывает (обзор приёма, а не история находки).
+    y = job.get("youtube") or {}
+    sub = str(y.get("cover_sub") or "")
+    if not y.get("cover_kicker"):
+        note.append("нет youtube.cover_kicker — крючок обложки собирается "
+                    "из заголовка механически и почти всегда выходит длиннее "
+                    "5 слов")
+    if not any(ch.isdigit() for ch in sub) and not any(c in sub for c in "$£€"):
+        note.append("в youtube.cover_sub нет числа — на обложке не будет "
+                    "суммы, и карточка-итог в конце ролика останется без "
+                    "рекапа")
+
+    music = job.get("music")
+    if music:
+        p = Path(music)
+        if not p.is_absolute():
+            p = ROOT / p
+        if not p.exists():
+            note.append(f"music: файла {music} нет — подложку выберет жребий")
+
+    return stop, note
+
+
+def require_ok(job: dict, log=print) -> None:
+    """Проверка как ворота: заметки в лог, «стоп» роняет прогон."""
+    stop, note = check(job)
+    for n in note:
+        log(f"  ! {n}")
+    if stop:
+        raise SystemExit("спецификация не проходит проверку:\n  - "
+                         + "\n  - ".join(stop))

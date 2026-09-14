@@ -1102,6 +1102,17 @@ def shift_marks(marks, boundaries, pause=CHAPTER_PAUSE):
         m = dict(m)
         m["start"] = round(m["start"] + _shift_at(m["start"], boundaries, pause), 3)
         m["end"] = round(m["end"] + _shift_at(m["end"], boundaries, pause), 3)
+        # Слова сдвигаются ВМЕСТЕ с предложением: по ним считается заливка
+        # субтитра и в длинном ролике, и в шортсе. Оставить их на
+        # несдвинутой шкале — значит получить подсветку, уехавшую от голоса
+        # ровно на сумму пауз, при формально правильных границах фразы.
+        words = m.get("words")
+        if words:
+            m["words"] = [
+                {"w": w.get("w", ""),
+                 "s": round(float(w["s"]) + _shift_at(float(w["s"]), boundaries, pause), 3),
+                 "e": round(float(w["e"]) + _shift_at(float(w["e"]), boundaries, pause), 3)}
+                for w in words]
         out.append(m)
     return out
 
@@ -1425,10 +1436,10 @@ def film_look():
 
 def text_for_group(group, moments):
     """
-    Плашки, попадающие в эту группу склейки, с пересчётом в локальное время.
+    Карточки, попадающие в эту группу склейки, с пересчётом в локальное время.
 
     Группа рендерится отдельным файлом, и время внутри неё идёт от нуля.
-    Абсолютная секунда плашки известна из плана, начало группы — из первого
+    Абсолютная секунда карточки известна из плана, начало группы — из первого
     её кадра; разница и есть локальное время. Считать это где-то ещё нельзя:
     только здесь известно, какие кадры попали в какую группу.
     """
@@ -1510,9 +1521,8 @@ def join(group, out: Path, st, sparks, first=False, moments=None):
     # проявление идёт не из черноты, а из коричневой мути.
     if first and st.opening == "black_card":
         post.append("fade=t=in:st=0:d=1.4")
-    # Плашки ставятся ПОСЛЕ виньетки. Иначе виньетка гасит нижние углы, а
-    # плашка стоит именно там — текст уходил бы в тень ровно у той половины
-    # раскладок, где он внизу.
+    # Карточка ставится ПОСЛЕ виньетки. Иначе виньетка гасит углы, а
+    # карточка стоит именно у края — текст уходил бы в тень.
     chain = textcard.filter_chain(text_for_group(group, moments or []))
     if chain:
         post.append(chain)
@@ -1522,8 +1532,20 @@ def join(group, out: Path, st, sparks, first=False, moments=None):
     cmd = (f'ffmpeg -y {ins} -filter_complex "{";".join(fc)}" -map "[out]" '
            f'-c:v libx264 -crf {st.crf} -preset {st.preset} '
            f'-pix_fmt yuv420p -an "{out}"')
-    subprocess.run(cmd, shell=True, check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # stderr БОЛЬШЕ НЕ ГЛУШИТСЯ НАСМЕРТЬ. Раньше здесь стояло
+    # stderr=DEVNULL с check=True, и падение группы склейки приходило в лог
+    # голым «returned non-zero exit status 1» — без имени фильтра, без
+    # отсутствующего файла, без строки ffmpeg. Именно это описано в шапке
+    # check_luts: «ffmpeg на отсутствующий .cube ругается уже внутри группы
+    # склейки, а stderr там заглушен». На успешном прогоне вывод
+    # по-прежнему никуда не идёт — печатается только хвост при падении.
+    r = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.PIPE)
+    if r.returncode != 0:
+        tail = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        raise SystemExit(
+            f"склейка группы {out.name} упала (код {r.returncode}). "
+            f"Последние строки ffmpeg:\n  " + "\n  ".join(tail[-12:]))
 
 
 def duck_points(st, story, pace):
@@ -1707,25 +1729,30 @@ def main(job_path):
         log("  ! есть замечания уровня «стоп» — ролик соберётся, но "
             "выкладывать его в таком виде не стоит")
 
-    # ── ПЛАШКИ ───────────────────────────────────────────────────────
+    # ── КАРТОЧКИ НА ЧИСЛАХ ───────────────────────────────────────────
     # Собственная графика конвейера: единственный элемент кадра, которого
-    # нет ни в одном исходном материале.
+    # нет ни в одном исходном материале. Редко и только на развязках —
+    # см. textcard.MAX_CARDS и MIN_GAP.
     moments = textcard.moments(getattr(st, "beats", []), marks, st.vector,
-                               st.rng)
+                               st.rng,
+                               chapters=(job.get("youtube") or {}).get("chapters"))
     # Разбор чисел идёт по ИСХОДНОМУ сценарию (см. заголовок раздела «паузы
-    # перед главами» выше), а плашка ложится на РАЗДВИНУТЫЙ таймлайн — иначе
-    # text_for_group() сверяет её время со сдвинутыми группами кадров и не
-    # находит совпадения ни разу после первой же паузы, то есть все плашки
-    # после первой главы молча пропадают.
+    # перед главами» выше), а карточка ложится на РАЗДВИНУТЫЙ таймлайн —
+    # иначе text_for_group() сверяет её время со сдвинутыми группами кадров
+    # и не находит совпадения ни разу после первой же паузы, то есть все
+    # карточки после первой главы молча пропадают.
     if boundaries:
         for m in moments:
             m["t"] = round(m["t"] + _shift_at(m["t"], boundaries, CHAPTER_PAUSE), 3)
     if moments:
-        log(f"── плашки: {len(moments)} шт., стиль {st.text_style}")
+        log(f"── карточки на числах: {len(moments)} шт. "
+            f"(потолок {textcard.MAX_CARDS}, только развязки)")
         for m in moments:
-            log(f"  {m['t']/60:5.1f} мин  {m['text']}")
+            log(f"  {m['t']/60:5.1f} мин  {m['value']}"
+                + (f" / {m['unit']}" if m.get("unit") else "")
+                + f"   вес {m.get('score')}")
     elif st.text_style != "none":
-        log("── плашки: чисел в развязках не нашлось, ролик без них")
+        log("── карточки: чисел в развязках не нашлось, ролик без них")
 
     # Карточка стиля кладётся рядом с роликом: из неё channel.py потом
     # запишет ролик в журнал. Пишется ЗДЕСЬ, а не до плана: в неё входят
@@ -1767,17 +1794,42 @@ def main(job_path):
     silent = tmp / "silent.mp4"
     render.concat_segments(segs, silent)
 
-    # Название выпуска — стекло поверх УЖЕ смонтированных первых кадров,
-    # без новой тишины в начале: крючок озвучки не режем. Дешёвый второй
-    # проход ASS, не покадровый ререндер.
+    # ── НАДПИСИ: ОДИН ПРОХОД ASS НА ВСЁ ──────────────────────────────
+    # Название выпуска, субтитры с заливкой по словам и карточка-итог —
+    # один файл ASS и одно перекодирование. Проход здесь был и раньше (им
+    # жглось только название), а libass рисует хоть одну надпись, хоть все
+    # три за те же деньги: второй такой же проход ради субтитров стоил бы
+    # ещё одного полного перекодирования получасового ролика.
+    #
+    # marks_final — шкала ГОТОВОГО ролика (с паузами глав). Субтитры
+    # считаются по ней, а не по кэшированным marks: иначе после первой же
+    # паузы подпись обгоняет голос на её длину.
     import type as type_mod
+    final_marks = shift_marks(marks, boundaries, CHAPTER_PAUSE) if boundaries else marks
     kicker, _sub = type_mod.cover_lines(job)
-    if kicker:
-        log(f"── название выпуска 0–{type_mod.OPENING_DUR:.1f} с: «{kicker}»")
-        opening_ass = tmp / "opening.ass"
-        type_mod.write_opening_ass(job, opening_ass, W, H)
+    want_subs = bool(job.get("burn_subs", True))
+    have_words = any(m.get("words") for m in final_marks)
+    if want_subs and not have_words:
+        log("  ! в marks.json нет тайм-кодов слов (кэш старше этой правки) — "
+            "субтитры в ролик не вжигаются; подсветка по оценке хуже, чем "
+            "её отсутствие. Лечится любым прогоном stage: assets")
+    recap, cta = type_mod.outro_lines(job)
+    if kicker or (want_subs and have_words) or recap or cta:
+        log(f"── надписи одним проходом ASS: "
+            f"название «{kicker}»"
+            + (", субтитры с подсветкой" if want_subs and have_words else "")
+            + (f", итог «{recap}»" if recap else ""))
+        overlay_ass = tmp / "overlay.ass"
+        type_mod.write_overlay_ass(job, overlay_ass, final_marks, total,
+                                   W, H, subs=want_subs and have_words)
         titled = tmp / "silent_titled.mp4"
-        render.burn_ass(silent, opening_ass, titled, type_mod.fontsdir())
+        # crf БЕРЁТСЯ ИЗ СТИЛЯ, а не из умолчания функции. Раньше здесь
+        # стоял зашитый crf 18: сегменты жались по st.crf (22 у канала), а
+        # последний проход перекодировал весь ролик заново на 18 — файл
+        # раздувался, и совет «подними crf в style_override» из проверки
+        # размера ниже не действовал вовсе.
+        render.burn_ass(silent, overlay_ass, titled, type_mod.fontsdir(),
+                        crf=st.crf)
         silent = titled
 
     log("── звук")
@@ -1843,7 +1895,6 @@ def main(job_path):
     # иначе субтитры после первой паузы обгоняли бы звук на её длину.
     # shorts.py режет куски из final.mp4 и читает этот файл, если он есть,
     # вместо assets/marks.json — тот остаётся кэшем на исходной шкале.
-    final_marks = shift_marks(marks, boundaries, CHAPTER_PAUSE) if boundaries else marks
     render.write_srt(final_marks, out / "subs.srt")
     (out / "marks_final.json").write_text(
         json.dumps(final_marks, ensure_ascii=False), encoding="utf-8")

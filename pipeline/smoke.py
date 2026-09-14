@@ -21,6 +21,7 @@ smoke.py — прогон конвейера на настоящих файла�
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -75,6 +76,16 @@ def main(job_path):
     if n_dup != 1 or decided.get(b, (True, ""))[0] is not False:
         raise SystemExit(f"дубль не отсеялся: {n_dup} {decided}")
     print("   дубль archive.org vs pexels отсеян")
+
+    print("── поля спецификации")
+    import jobspec as jobspec_mod
+    stop, note = jobspec_mod.check(job)
+    for n in note:
+        print(f"   ! {n}")
+    if stop:
+        raise SystemExit("спецификация не проходит проверку:\n  - "
+                         + "\n  - ".join(stop))
+    print("   имена полей, цветокоры, voice_settings — в порядке")
 
     print("── темы")
     print(f"   {channel.check(job) or 'не повтор'}")
@@ -265,6 +276,29 @@ def main(job_path):
     if "&H00FFFFFF" not in body:
         raise SystemExit("шапка не белая")
     print("   Oswald, белый, без панели")
+    # Субтитры шортса — та же подсветка, что в длинном: бренд у лонга и у
+    # шортса обязан быть один, иначе шортс не читается как его кусок.
+    kara_marks = [
+        {"text": "He sold it for nine thousand dollars.", "start": 0.0,
+         "end": 2.0,
+         "words": [{"w": "He", "s": 0.0, "e": 0.2},
+                   {"w": "sold", "s": 0.2, "e": 0.5},
+                   {"w": "it", "s": 0.5, "e": 0.6},
+                   {"w": "for", "s": 0.6, "e": 0.8},
+                   {"w": "nine", "s": 0.8, "e": 1.1},
+                   {"w": "thousand", "s": 1.1, "e": 1.6},
+                   {"w": "dollars.", "s": 1.6, "e": 2.0}]}]
+    k_ass = shorts.build_ass(
+        shorts.lines_with_times(kara_marks, 0, 0, 0.0), layout,
+        td / "kara.ass", word_marks=kara_marks, t0=0.0, t1=2.0)
+    ktxt = k_ass.read_text(encoding="utf-8")
+    if type_mod.SUB_DIM_A not in ktxt or "\\1a&H00&" not in ktxt:
+        raise SystemExit("в субтитрах шортса нет заливки по словам")
+    if not shorts.karaoke_ready(kara_marks, 0, 0):
+        raise SystemExit("karaoke_ready не увидел измеренные слова")
+    if shorts.karaoke_ready([{"text": "x", "start": 0, "end": 1}], 0, 0):
+        raise SystemExit("karaoke_ready принял предложение без слов")
+    print("   заливка по словам в шортсе — та же, что в длинном")
     opening = type_mod.write_opening_ass(job, td / "opening.ass")
     otext = opening.read_text(encoding="utf-8")
     if kicker.split()[0] not in otext.upper() and kicker not in otext:
@@ -275,8 +309,131 @@ def main(job_path):
         raise SystemExit("в названии выпуска нет слоя стекла (blur)")
     print("   opening.ass со стеклом")
 
-    print("── план кадров")
+    print("── холодное открытие")
+    from editorial import rails as rails_mod
+    cold = rails_mod._check_cold_open(job)
+    if cold:
+        print(f"   ! [{cold[0].level}] {cold[0].text}")
+    else:
+        print("   цена находки звучит в первые ~10 секунд")
+
+    print("── субтитры с подсветкой")
     marks = json.loads((work / "marks.json").read_text())
+    have_words = [m for m in marks if m.get("words")]
+    if not have_words:
+        print("   ! в marks.json нет тайм-кодов слов — этот кэш старше правки; "
+              "в ролик субтитры не вожгутся, шортс останется без подсветки")
+    else:
+        overlay = type_mod.write_overlay_ass(
+            job, td / "overlay.ass", marks,
+            total=json.loads((work / "state.json").read_text())["total_audio"])
+        otxt = overlay.read_text(encoding="utf-8")
+        if ",KSUB," not in otxt:
+            raise SystemExit("в overlay.ass нет ни одного субтитра")
+        if type_mod.SUB_DIM_A not in otxt:
+            raise SystemExit("в субтитрах нет приглушённой ступени — "
+                             "заливка по словам не работает")
+        if "\\1a&H00&" not in otxt:
+            raise SystemExit("слова не выходят на полную яркость")
+        # Полей в строке Style должно быть ровно столько же, сколько в
+        # Format: лишнее поле libass читает молча и не тем ключом.
+        fmt = next(l for l in otxt.splitlines() if l.startswith("Format:")
+                   and "Fontname" in l)
+        n_fmt = len(fmt.split(":", 1)[1].split(","))
+        for line in otxt.splitlines():
+            if line.startswith("Style:"):
+                n = len(line.split(":", 1)[1].split(","))
+                if n != n_fmt:
+                    raise SystemExit(
+                        f"в ASS стиль «{line.split(',')[0]}» несёт {n} полей "
+                        f"при {n_fmt} в Format — libass прочитает их со сдвигом")
+        # \t(a,b) с концом раньше начала libass молча не рисует.
+        import re as _re
+        rev = [m for m in _re.findall(r"\\t\((\d+),(\d+),", otxt)
+               if int(m[1]) < int(m[0])]
+        if rev:
+            raise SystemExit(f"{len(rev)} анимаций подсветки с концом раньше "
+                             f"начала — эти слова не подсветятся")
+        # Заливка обязана идти ТОЛЬКО вперёд: возврат в приглушённое
+        # состояние — это прежний приём «бегущее слово», от которого ушли.
+        if f"\\1a{type_mod.SUB_DIM_A}" in otxt.split("}", 1)[-1] and (
+                f",\\1a{type_mod.SUB_DIM_A})" in otxt):
+            raise SystemExit("слово гаснет обратно — заливка не накапливается")
+        print(f"   overlay.ass: {otxt.count('Dialogue:')} событий, "
+              f"{otxt.count(',KSUB,')} субтитров, заливка по словам")
+
+    print("── карточки на числах")
+    from editorial import textcard as textcard_mod
+    tc_font = textcard_mod.font_path()
+    if not tc_font or type_mod.FONT_FILE.name not in str(tc_font):
+        raise SystemExit(f"карточки набираются не шрифтом канала: {tc_font}")
+    chain = textcard_mod.filter_chain(
+        [{"t_local": 1.0, "value": "$450 MILLION", "unit": "DOLLARS",
+          "hold": textcard_mod.HOLD}])
+    if textcard_mod.RULE_COLOR not in chain:
+        raise SystemExit("у карточки нет акцентной линейки")
+    if chain.count("drawtext=") != 2:
+        raise SystemExit("в карточке не две строки: число и подпись")
+    # Линейка рисуется ОТРЕЗКАМИ: drawbox считает w один раз, при сборке
+    # фильтра, и выражение с t в нём молча не работает — на этом уже
+    # незаметно не анимировался прежний стиль underline_wipe.
+    if "drawbox" not in chain:
+        raise SystemExit("линейки нет вовсе")
+    widths = re.findall(r"drawbox=x=\d+:y='[^']*':w=(\d+)", chain)
+    if len(set(widths)) < 5:
+        raise SystemExit(f"линейка не растёт: всего {len(set(widths))} "
+                         f"разных ширин — выражение по t в drawbox не "
+                         f"работает, нужны отрезки")
+    # Величина факта решает, какой попадёт на экран, а не порядок в тексте.
+    big = textcard_mod._fact_at("The hammer fell at $450 million.")
+    small = textcard_mod._fact_at("He waited 31 years.")
+    if not big or not small:
+        raise SystemExit("разбор факта сломался")
+    w_big = textcard_mod._importance(big[2], big[1], "revelation")
+    w_small = textcard_mod._importance(small[2], small[1], "revelation")
+    if w_big <= w_small:
+        raise SystemExit(f"450 миллионов ({w_big}) весят не больше "
+                         f"31 года ({w_small})")
+    print(f"   {Path(tc_font).name}, линейка {textcard_mod.RULE_COLOR}, "
+          f"потолок {textcard_mod.MAX_CARDS} на ролик")
+
+    print("── комплект для выкладки")
+    import youtube as yt
+    fake_chaps = [(0.0, "one"), (300.0, "two"), (600.0, "three")]
+    card = yt.publish_card(job, fake_chaps, 1500.0, work.parent,
+                           work.parent / "out", "a, b")
+    need = ["ЗАГОЛОВОК", "ОПИСАНИЕ", "ИСТОЧНИКИ", "ХЕШТЕГИ", "ТЕГИ",
+            "НАЗВАНИЯ ШОРТСОВ", "ПРОМПТ ОБЛОЖКИ", "ПЕРВЫЙ КОММЕНТАРИЙ",
+            "ЗАПИСЬ ДЛЯ СООБЩЕСТВА", "ПРОМПТЫ КАРТИНОК ДЛЯ СООБЩЕСТВА"]
+    missing = [n for n in need if n not in card]
+    if missing:
+        raise SystemExit("в комплекте нет разделов: " + ", ".join(missing))
+    tags5 = yt.hashtags_five(job, yt.load_publish_rules())
+    # Три — жёсткий минимум: именно столько YouTube показывает НАД
+    # заголовком, и меньше трёх означает пустое место там, где у соседних
+    # роликов стоят ключевые слова. Пять — заказанная норма, но добрать их
+    # можно только из самой спецификации, поэтому четвёртый и пятый это
+    # заметка, а не стоп.
+    if len(tags5) < 3:
+        raise SystemExit(f"хештегов {len(tags5)}: {tags5}. Меньше трёх — "
+                         f"пустое место над заголовком. Добавь в "
+                         f"youtube.hashtags или youtube.tags")
+    if len(tags5) < 5:
+        print(f"   ! хештегов {len(tags5)} из 5 — добери youtube.hashtags")
+    st_titles = yt.short_titles(job, work.parent / "out", yt.load_publish_rules())
+    if len(st_titles) != 2 or not all(st_titles):
+        raise SystemExit(f"названий шортсов {st_titles} — нужно два непустых")
+    if any(len(t) > 100 for t in st_titles):
+        raise SystemExit("название шортса длиннее 100 символов — YouTube обрежет")
+    # Незакрытый плейсхолдер — это шаблон, уехавший к человеку сырым.
+    left = [m for m in ("{TITLE}", "{QUESTION}", "{SUM}", "{ITEM}", "{ERA}",
+                        "{CHAPTER}") if m in card]
+    if left:
+        raise SystemExit(f"в комплекте остались плейсхолдеры: {left}")
+    print(f"   {len(need)} разделов, 5 хештегов, 2 названия шортсов, "
+          f"{len(card)} символов")
+
+    print("── план кадров")
     total = json.loads((work / "state.json").read_text())["total_audio"]
     av = channel.avoid()
     st = style_mod.StyleEngine(
