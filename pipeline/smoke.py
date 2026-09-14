@@ -21,6 +21,7 @@ smoke.py — прогон конвейера на настоящих файла�
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -361,17 +362,40 @@ def main(job_path):
         print(f"   overlay.ass: {otxt.count('Dialogue:')} событий, "
               f"{otxt.count(',KSUB,')} субтитров, заливка по словам")
 
-    print("── плашки на числах — шрифтом канала")
+    print("── карточки на числах")
     from editorial import textcard as textcard_mod
     tc_font = textcard_mod.font_path()
     if not tc_font or type_mod.FONT_FILE.name not in str(tc_font):
-        raise SystemExit(f"плашки набираются не шрифтом канала: {tc_font}")
+        raise SystemExit(f"карточки набираются не шрифтом канала: {tc_font}")
     chain = textcard_mod.filter_chain(
-        [{"t_local": 1.0, "text": "$9,000 SOLD", "style": "underline_wipe",
-          "place": "lower_left", "hold": 3.0}])
-    if textcard_mod.AMBER_RGB not in chain:
-        raise SystemExit("плашка не в фирменном янтаре")
-    print(f"   {Path(tc_font).name}, янтарь {textcard_mod.AMBER_RGB}")
+        [{"t_local": 1.0, "value": "$450 MILLION", "unit": "DOLLARS",
+          "hold": textcard_mod.HOLD}])
+    if textcard_mod.RULE_COLOR not in chain:
+        raise SystemExit("у карточки нет акцентной линейки")
+    if chain.count("drawtext=") != 2:
+        raise SystemExit("в карточке не две строки: число и подпись")
+    # Линейка рисуется ОТРЕЗКАМИ: drawbox считает w один раз, при сборке
+    # фильтра, и выражение с t в нём молча не работает — на этом уже
+    # незаметно не анимировался прежний стиль underline_wipe.
+    if "drawbox" not in chain:
+        raise SystemExit("линейки нет вовсе")
+    widths = re.findall(r"drawbox=x=\d+:y='[^']*':w=(\d+)", chain)
+    if len(set(widths)) < 5:
+        raise SystemExit(f"линейка не растёт: всего {len(set(widths))} "
+                         f"разных ширин — выражение по t в drawbox не "
+                         f"работает, нужны отрезки")
+    # Величина факта решает, какой попадёт на экран, а не порядок в тексте.
+    big = textcard_mod._fact_at("The hammer fell at $450 million.")
+    small = textcard_mod._fact_at("He waited 31 years.")
+    if not big or not small:
+        raise SystemExit("разбор факта сломался")
+    w_big = textcard_mod._importance(big[2], big[1], "revelation")
+    w_small = textcard_mod._importance(small[2], small[1], "revelation")
+    if w_big <= w_small:
+        raise SystemExit(f"450 миллионов ({w_big}) весят не больше "
+                         f"31 года ({w_small})")
+    print(f"   {Path(tc_font).name}, линейка {textcard_mod.RULE_COLOR}, "
+          f"потолок {textcard_mod.MAX_CARDS} на ролик")
 
     print("── план кадров")
     total = json.loads((work / "state.json").read_text())["total_audio"]
