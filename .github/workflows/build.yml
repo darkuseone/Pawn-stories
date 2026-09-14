@@ -254,8 +254,17 @@ jobs:
       # material/vet/render не заказывают озвучку заново. Если кэш не
       # поднялся, папка пустая: material скачает только футаж и запишет
       # его новым ключом — следующий render потеряет оплаченный голос.
+      # УСЛОВИЕ НЕ "do_build == 'true'" САМО ПО СЕБЕ — это ловило и stage:
+      # auto тоже, а не только render. do_build='true' у auto ЗАОДНО с
+      # do_assets='true': значит этап 1 этого же прогона голос ещё
+      # только СОЗДАСТ, и проверять его заранее как раз и значит падать
+      # на первом же новом джобе с пустым кэшем — ровно то падение,
+      # из-за которого этот шаг вообще существует. Guard нужен только
+      # тому прогону, который сам озвучку не производит: render (do_build
+      # без do_assets), material, vet. У post и shorts своя логика —
+      # они не трогают work/<id>/assets вовсе, качают final.mp4 из релиза.
       - name: Озвучка из кэша на месте
-        if: steps.pick.outputs.skip != 'true' && (steps.pick.outputs.stage == 'material' || steps.pick.outputs.stage == 'vet' || steps.pick.outputs.do_build == 'true')
+        if: steps.pick.outputs.skip != 'true' && (steps.pick.outputs.stage == 'material' || steps.pick.outputs.stage == 'vet' || (steps.pick.outputs.do_build == 'true' && steps.pick.outputs.do_assets != 'true'))
         run: |
           set -e
           VOICE="work/${{ steps.pick.outputs.id }}/assets/voice_full.m4a"
