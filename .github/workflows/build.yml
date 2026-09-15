@@ -302,13 +302,19 @@ jobs:
           mkdir -p "$DIR"
           gh release download "final-${{ steps.pick.outputs.job }}" \
             --repo "${{ github.repository }}" \
-            --pattern "final.mp4" --pattern "subs.srt" \
+            --pattern "final.mp4" --pattern "clean.mp4" --pattern "subs.srt" \
             --pattern "marks_final.json" \
             --dir "$DIR" --clobber || true
           test -f "$DIR/final.mp4" || {
             echo "нет final.mp4 в релизе final-${{ steps.pick.outputs.job }} — сначала нужен полный прогон (stage: auto)"
             exit 1
           }
+          # clean.mp4 — тот же ролик без вжжённых надписей, из него режутся
+          # шортсы. В релизах, собранных до его появления, его нет: shorts.py
+          # переживёт это сам, срезав низ кадра, и скажет об этом в лог.
+          test -f "$DIR/clean.mp4" \
+            && echo "clean.mp4 взят из релиза — шортсы режутся из полного кадра" \
+            || echo "clean.mp4 в релизе нет (ролик собран до этой правки) — шортсы возьмут только верх кадра final.mp4"
           test -f "$DIR/marks_final.json" \
             && echo "marks_final.json взят из релиза" \
             || echo "marks_final.json в релизе нет — shorts.py пересчитает сдвиг сам"
@@ -473,6 +479,7 @@ jobs:
             `cover_1.jpg` продублирован в `thumbnail.jpg`; `cover_2.jpg` — запасной вариант.
           files: |
             ${{ steps.out.outputs.dir }}/final.mp4
+            ${{ steps.out.outputs.dir }}/clean.mp4
             ${{ steps.out.outputs.dir }}/subs.srt
             ${{ steps.out.outputs.dir }}/marks_final.json
             ${{ steps.out.outputs.dir }}/short_*.mp4

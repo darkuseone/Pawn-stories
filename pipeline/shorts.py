@@ -103,19 +103,37 @@ SUB_MAX_LINES = 2
 SUB_SIZE = 140
 SUB_MARGIN = 60            # поля стиля SUB, они же предел ширины строки
 
-# ГДЕ СТОЯТ СУБТИТРЫ ШОРТСА — 0.66 высоты, а не 0.74. Ниже нельзя: в
-# длинный ролик вжжены его собственные субтитры (type.sub_long_y — при
-# кегле 116 это полоса примерно 0.79-0.93 высоты), и при crop+scale в 9:16
-# доли по высоте сохраняются, то есть чужая строка лезет в кадр шортса
-# поверх его собственной. То же самое раньше случалось с карточками на
-# числах: на 0.74 субтитр наезжал на карточку прямо в кадре, поймано на
-# готовом шортсе ff-ep06, где «Under the treasure trove law that» легло
-# поверх «1996». Карточка с тех пор уехала в верхнюю треть
-# (editorial/textcard.CARD_Y), а низ остался за субтитрами.
+# ── КОМПОНОВКА ВЕРТИКАЛЬНОГО КАДРА ────────────────────────────────────
 #
-# Выше 0.62 тоже не стоит: низ кадра у Shorts закрывает интерфейс YouTube
-# (заголовок и кнопки), а слишком высокий субтитр лезет к шапке с вопросом.
-SUB_Y = 0.66
+# ШИРОКИЙ КАДР НЕ РАСТЯГИВАЕТСЯ НА ВЕСЬ ЭКРАН. Раньше из 1920x1080
+# вырезалась центральная колонка шириной 608 px и разгонялась до 1080 —
+# апскейл в 1.78 раза по узкой полоске. Результат был мыльный, а две
+# трети композиции уезжали за края: в кадре оставалась случайная
+# вертикальная полоса вместо снятого плана. Теперь кадр вписывается
+# ЦЕЛИКОМ по ширине (это даунскейл, качество только выигрывает), а
+# пустота сверху и снизу занята сильно размытой копией того же кадра —
+# и там же живут вопрос и субтитры, то есть место не пропадает.
+FRAME_W = 1080
+
+# Из 16:9 берём центральный кроп 4:3: 1440x1080 -> 1080x810, масштаб 0.75.
+# Полностью вписанный 16:9 дал бы кадр высотой 608 (треть экрана) — это
+# слишком мелко для ленты; 4:3 срезает по четверти ширины с краёв, где у
+# этого канала почти всегда фон, и даёт кадр в 42% высоты.
+CLEAN_CROP_W = 1440
+
+# Когда чистого clean.mp4 нет (ролик собран до его появления) и резать
+# приходится из final.mp4 с вжжёнными субтитрами — берём только ВЕРХ
+# кадра, выше их полосы. Кадр получается ниже, зато честный: без чужой
+# строки и без её замыливания.
+FALLBACK_CROP_W = 1200
+
+# Доля свободного места, уходящая ВВЕРХ. Снизу оставляем больше: там
+# субтитры в две строки крупным кеглем, сверху — вопрос.
+FRAME_TOP_SHARE = 0.42
+
+# Ниже этой границы текст не ставим: низ Shorts закрывает интерфейс
+# YouTube — название канала, описание, кнопки и прогресс-бар.
+SAFE_BOTTOM = 1660
 
 FONT = type_mod.font_name()
 
@@ -443,6 +461,35 @@ def fallback_question(job) -> str:
     return str(chapters[0]).strip() if chapters else ""
 
 
+def frame_layout(clean: bool) -> dict:
+    """
+    Геометрия видеокадра внутри вертикального экрана 1080x1920.
+
+    clean=True — источник без вжжённых надписей (out/clean.mp4): берём
+    кадр целиком по высоте, центральный кроп 4:3, масштаб 0.75 (вниз).
+
+    clean=False — источник final.mp4, в нём уже вжжены субтитры длинного
+    ролика. Их полосу считаем той же формулой, что type.sub_long_y (центр
+    блока на 1080-BOTTOM-half, высота блока 2*half, худший случай — две
+    строки), и берём только то, что ВЫШЕ неё. Смазывать её, как делала
+    первая версия этой правки, нельзя: размытая полоса под кадром видна и
+    читается как грязь.
+    """
+    if clean:
+        cw, ch = CLEAN_CROP_W, 1080
+    else:
+        fs, mgn = type_mod.SUB_LONG_FS, type_mod.SUB_LONG_BOTTOM
+        ch = 1080 - mgn - int(fs * 1.2 * 2) - 18
+        cw = FALLBACK_CROP_W
+    ch -= ch % 2
+    cx = (1920 - cw) // 2
+    fh = int(round(ch * FRAME_W / cw))
+    fh -= fh % 2
+    top = int((H - fh) * FRAME_TOP_SHARE)
+    top -= top % 2
+    return dict(cw=cw, ch=ch, cx=cx, cy=0, fh=fh, top=top, bottom=top + fh)
+
+
 def header_layout(question: str, style: str = "") -> dict:
     """
     Геометрия шапки: вопрос сверху, стекло (см. build_ass), без плоской
@@ -459,16 +506,27 @@ def header_layout(question: str, style: str = "") -> dict:
     пустая анимация без единой буквы.
     style оставлен в сигнатуре, чтобы старые вызовы не падали, и игнорируется.
     """
-    lines = wrap(question.strip(), 17) if question else []
+    frame = style if isinstance(style, dict) else frame_layout(True)
+    lines = wrap(question.strip(), 20) if question else []
     if not lines:
         return dict(lines=[], size=0, cx=W // 2, intro_cy=0, block_cy=0)
-    size = 96 if len(lines) <= 2 else (80 if len(lines) == 3 else 66)
+    size = 100 if len(lines) <= 2 else (88 if len(lines) == 3 else 78)
     size = fit_size(lines, W - 2 * BOX_MARGIN, size, floor=44)
-    line_h = size * 1.22
-    ph = line_h * len(lines)
-    block_cy = BOX_MARGIN + ph / 2
+    # Зона над кадром. Вопрос в неё вписывается и по высоте тоже: при
+    # четырёх строках крупного кегля он иначе заезжал бы на картинку.
+    zone = frame["top"] - BOX_MARGIN
+    if size * 1.22 * len(lines) > zone:
+        size = max(40, int(zone / (1.22 * len(lines))))
+    ph = size * 1.22 * len(lines)
+    block_cy = BOX_MARGIN + (zone - ph) / 2 + ph / 2
     return dict(lines=lines, size=size, cx=W // 2,
-                intro_cy=int(H * 0.42), block_cy=block_cy)
+                intro_cy=int(frame["top"] + frame["fh"] / 2),
+                block_cy=block_cy)
+
+
+def sub_center(frame: dict) -> int:
+    """Центр блока субтитров — под кадром, выше интерфейса YouTube."""
+    return int((frame["bottom"] + SAFE_BOTTOM) / 2)
 
 
 def karaoke_ready(marks, lo, hi) -> bool:
@@ -478,7 +536,7 @@ def karaoke_ready(marks, lo, hi) -> bool:
 
 
 def build_ass(subs, layout: dict, out: Path, word_marks=None,
-              t0: float = 0.0, t1: float = 0.0):
+              t0: float = 0.0, t1: float = 0.0, frame: dict = None):
     """
     Шапка — то же стекло (glow/edge/fill), что название и итог в длинном
     ролике: непрозрачной осталась только подпись внизу. Раньше здесь стоял
@@ -500,7 +558,14 @@ def build_ass(subs, layout: dict, out: Path, word_marks=None,
     """
     q_size = layout["size"] or 1
     all_lines = [l for _, _, c in subs for l in wrap(c, SUB_MAX_CHARS)]
+    frame = frame or frame_layout(True)
+    sub_cy = sub_center(frame)
     sub_size = fit_size(all_lines, W - 2 * SUB_MARGIN, SUB_SIZE, floor=34)
+    # Подпись живёт ПОД кадром, в полосе до интерфейса YouTube. Если две
+    # строки крупного кегля в неё не помещаются, кегль ужимается — иначе
+    # верхняя строка заезжает на картинку, а нижняя уходит под кнопки.
+    room = (SAFE_BOTTOM - frame["bottom"])
+    sub_size = min(sub_size, max(34, int(room / (1.2 * SUB_MAX_LINES))))
     # Заливка субтитра — тот же #f5f5f7, что в длинном ролике (type.SUB_FULL);
     # приглушённую ступень задаёт \\1a внутри события. Шапка с вопросом
     # остаётся чисто белой: она не заливается и должна быть ярче подписи.
@@ -554,13 +619,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         for s, e, _style, body, enter in kara:
             rows.append(
                 f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
-                + type_mod.sub_tag(W // 2, int(H * SUB_Y), an=5, enter=enter)
+                + type_mod.sub_tag(W // 2, sub_cy, an=5, enter=enter)
                 + body)
     else:
         for s, e, c in subs:
             rows.append(
                 f"Dialogue: 1,{ass_time(s)},{ass_time(e)},SUB,,0,0,0,,"
-                f"{{\\pos({W//2},{int(H*SUB_Y)})}}"
+                f"{{\\pos({W//2},{sub_cy})}}"
                 + "\\N".join(ass_escape(l) for l in wrap(c, SUB_MAX_CHARS)))
     out.write_text(head + "\n".join(rows) + "\n", encoding="utf-8")
     return out
@@ -569,65 +634,41 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 # ─────────────────────── РЕНДЕР ───────────────────────
 
 def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
-                 crf: int = 20):
+                 frame: dict, crf: int = 20):
     """
-    Вырезает кусок, разворачивает в 9:16 и накладывает шапку и субтитры.
+    Вырезает кусок, вписывает кадр в 9:16 и накладывает шапку и субтитры.
 
-    Кадрирование центральное: 1920x1080 -> 608x1080 -> 1080x1920. Апскейл
-    в 1.78 раза заметен только на мелкой фактуре, а исходники готовятся на
-    холсте 3000 пикселей (PREP_W в render.py) — то есть детали в кадре
-    достаточно, теряется она уже при сборке длинного ролика, а не здесь.
+    КАДР ВПИСЫВАЕТСЯ, А НЕ РАСТЯГИВАЕТСЯ. Прежняя версия брала из
+    1920x1080 центральную колонку 608 px и разгоняла её до 1080 — апскейл
+    в 1.78 раза по узкой полоске: мыло на любой фактуре и случайный
+    вертикальный срез вместо снятого плана. Теперь берётся широкий кроп
+    (frame_layout) и масштабируется ВНИЗ до ширины экрана, а свободное
+    место сверху и снизу занимает сильно размытая и притемнённая копия
+    того же кадра. Это стандартная раскладка вертикальной нарезки: видео
+    остаётся собой, фон не спорит с ним, текст ложится на фон, а не на
+    картинку.
+
+    Фон делается из ТОГО ЖЕ кропа (split), а не из исходного кадра: так у
+    фона и кадра совпадают цвет и свет, и стык не читается. Размытому фону
+    апскейл безразличен — его качество никто не видит.
+
+    hqdn3d убран вместе с апскейлом: он глушил зерно, разогнанное прежним
+    увеличением. При масштабе вниз зерно усредняется само, а лишний
+    фильтр только мылит.
 
     -ss ДО -i, а не после: так ffmpeg перематывает по ключевым кадрам и не
     декодирует всё от начала файла. На получасовом ролике разница — секунды
     против минут.
-
-    Плашки шапки больше не рисует ffmpeg (drawbox) — их кладёт сам libass
-    через ass-фильтр (BorderStyle=3, см. build_ass), поэтому здесь только
-    кадрирование, масштаб и один слой субтитров.
-
-    ДВОЙНЫЕ СУБТИТРЫ. src — это final.mp4, а в нём уже вжжены субтитры
-    длинного ролика (type.sub_long_y, кегль 116, \\an4 по центру блока).
-    crop+scale в 9:16 меняют только ширину, доля по высоте сохраняется —
-    и без этой правки под новой шапкой шортса всплывал обрывок чужой
-    строки: два разных субтитра на экране разом, замечено на готовом
-    шортсе. Текст уже впечён в пиксели, стереть его можно только смазав:
-    у boxblur своего окна по кадру нет, поэтому кадр после scale делится
-    (split) на две ветки, из одной вырезается (crop) ровно полоса старой
-    подписи, размывается (boxblur) и кладётся обратно тем же прямоугольником
-    (overlay) — и только на этот уже подчищенный кадр ложится ass с шапкой
-    и своими субтитрами.
     """
-    # 1080 * 9/16 = 607.5; libx264 требует чётные размеры, берём 608.
-    # hqdn3d ПОСЛЕ crop, ДО scale: в final.mp4 уже запечены движение камеры
-    # и temporal grain/искры. Вертикальный кроп оставляет треть ширины и
-    # усиливает горизонтальный дрейф втрое, а зерно после апскейла читается
-    # как вторая тряска. deshake/vidstab сюда нельзя — они борются с
-    # запечённым Ken Burns и качают сами.
-    crop_w = 608
     ass_f = f"ass={ass.as_posix()}:fontsdir={type_mod.fontsdir()}"
-
-    # Полоса старой подписи в координатах ГОТОВОГО 1080-кадра, тем же
-    # расчётом, что у type.sub_long_y: центр на 1080-BOTTOM-half, блок
-    # высотой 2*half. Однострочное событие короче двухстрочного, но их
-    # нижний край совпадает (высота всегда считается от нижнего отступа) —
-    # поэтому верх полосы берём по худшему случаю (двухстрочный), низ по
-    # общему нижнему краю, плюс небольшой запас на обводку и тень.
-    fs, mgn = type_mod.SUB_LONG_FS, type_mod.SUB_LONG_BOTTOM
-    half2 = int(fs * 1.2 * 2 / 2)
-    pad = 18
-    top_1080 = 1080 - mgn - 2 * half2 - pad
-    bot_1080 = 1080 - mgn + pad
-    band_y = max(0, round(top_1080 / 1080 * H))
-    band_h = min(H, round(bot_1080 / 1080 * H)) - band_y
-
     fc = (
-        f"[0:v]crop={crop_w}:1080:(iw-{crop_w})/2:0,"
-        f"hqdn3d=1.2:1.2:3:3,scale={W}:{H}:flags=lanczos,setsar=1,"
-        f"split=2[base][forblur];"
-        f"[forblur]crop={W}:{band_h}:0:{band_y},boxblur=24:2[blurred];"
-        f"[base][blurred]overlay=0:{band_y}[covered];"
-        f"[covered]{ass_f}[vout]"
+        f"[0:v]crop={frame['cw']}:{frame['ch']}:{frame['cx']}:{frame['cy']},"
+        f"split=2[fg][bgsrc];"
+        f"[bgsrc]scale={W}:{H}:force_original_aspect_ratio=increase,"
+        f"crop={W}:{H},boxblur=40:2,eq=brightness=-0.16:saturation=0.82[bg];"
+        f"[fg]scale={FRAME_W}:{frame['fh']}:flags=lanczos[fgs];"
+        f"[bg][fgs]overlay=0:{frame['top']}:shortest=1,setsar=1[v];"
+        f"[v]{ass_f}[vout]"
     )
     run(["ffmpeg", "-v", "error", "-y",
          "-ss", f"{t0:.3f}", "-t", f"{t1-t0:.3f}", "-i", str(src),
@@ -705,8 +746,27 @@ def main(job_path, want=2):
     if not final.exists():
         raise SystemExit(f"нет {final} — сначала собери ролик (build.py)")
 
+    # ИСТОЧНИК — РОЛИК БЕЗ ВЖЖЁННЫХ НАДПИСЕЙ, если он есть. В final.mp4
+    # уже стоят субтитры длинного ролика, и в вертикальном кадре они
+    # читаются чужой строкой поверх своей. clean.mp4 — тот же монтаж до
+    # прохода ASS (build.py кладёт его рядом и в релиз), шкала времени та
+    # же. Его нет только у роликов, собранных до этой правки: тогда режем
+    # из final.mp4 и берём верх кадра, выше полосы его субтитров.
+    clean = out / "clean.mp4"
+    src, is_clean = (clean, True) if clean.exists() else (final, False)
+    if not is_clean:
+        log("  ! clean.mp4 (монтаж без вжжённых надписей) не найден — режу "
+            "из final.mp4 и беру только ВЕРХ кадра, выше его субтитров. "
+            "Кадр из-за этого ниже; полный вернётся после любого прогона "
+            "stage: render или auto — они кладут clean.mp4 в релиз")
+
+    frame = frame_layout(is_clean)
+    log(f"── кадр: {frame['cw']}x{frame['ch']} из исходника -> "
+        f"{FRAME_W}x{frame['fh']} на {frame['top']} px сверху, "
+        f"масштаб {FRAME_W / frame['cw']:.2f}, фон размытый")
+
     marks = load_final_marks(job, assets, out)
-    total = duration_of(final)
+    total = duration_of(src)
     if not marks or total <= 0:
         raise SystemExit("нет тайм-кодов или пустой ролик")
 
@@ -750,18 +810,18 @@ def main(job_path, want=2):
         # шортсу, либо выдаёт его развязку раньше, чем видео до неё дошло.
         # per_block ключуется строкой номера блока (JSON не умеет int-ключи).
         question = per_block.get(str(beat.block), default_question)
-        layout = header_layout(question)
+        layout = header_layout(question, frame)
         subs = lines_with_times(marks, lo, hi, t0)
         kara_ok = karaoke_ready(marks, lo, hi)
         ass = build_ass(subs, layout, out / f"short_{n}.ass",
                         word_marks=marks[lo:hi + 1] if kara_ok else None,
-                        t0=t0, t1=t1)
+                        t0=t0, t1=t1, frame=frame)
         dst = out / f"short_{n}.mp4"
         log(f"── шортс {n}: {t0:.1f}–{t1:.1f} с ({t1-t0:.1f} с), "
             f"доля «{beat.kind}», блок {beat.block}, субтитров {len(subs)}, "
             f"{'подсветка по замеру' if kara_ok else 'БЕЗ подсветки (нет слов в marks)'}, "
             f"вопрос: {question or '(нет)'}")
-        render_short(final, t0, t1, ass, dst,
+        render_short(src, t0, t1, ass, dst, frame,
                      crf=int((job.get("style_override") or {}).get("crf", 20)))
         got = duration_of(dst)
         if got > 60.5:
