@@ -261,7 +261,7 @@ def main(job_path):
         raise SystemExit(f"шортс стартует с обрывка: {first!r}")
     print(f"   старт «{first[:48]}…» — не обрывок")
 
-    print("── шапка ASS без жёлтого")
+    print("── шапка ASS: карточка есть, текст резкий")
     import tempfile
     td = Path(tempfile.mkdtemp())
     layout = shorts.header_layout("How did a glazier walk out of the Louvre?")
@@ -269,13 +269,21 @@ def main(job_path):
     body = ass.read_text(encoding="utf-8")
     if "00D4FF" in body or "FFD400" in body:
         raise SystemExit("в шапке шортса остался жёлтый")
-    if "\\p1" in body:
-        raise SystemExit("в шапке шортса осталась стеклянная панель")
+    # КАРТОЧКА ОБЯЗАТЕЛЬНА, СВЕЧЕНИЕ ПО БУКВАМ ЗАПРЕЩЕНО. Проверка раньше
+    # требовала обратного — «никакого \p1», по правилу «в шортсе без
+    # панели». Промежуточная версия сделала «табличку» стеклом
+    # type.glass_events, то есть свечением \blur18 по самим буквам, и
+    # вопрос от него читался размазанным. Подложка и свечение — разные
+    # вещи: заливка рисуется отдельным слоем (\p1), текст на ней резкий.
+    if "\\p1" not in body:
+        raise SystemExit("под вопросом шортса нет карточки (\\p1)")
+    if "\\blur18" in body:
+        raise SystemExit("вопрос шортса размазан свечением (\\blur18)")
     if type_mod.font_name() not in body:
         raise SystemExit("в ASS нет шрифта канала")
     if "&H00FFFFFF" not in body:
         raise SystemExit("шапка не белая")
-    print("   Oswald, белый, без панели")
+    print("   Oswald, белый текст на полупрозрачной карточке")
     # Субтитры шортса — та же подсветка, что в длинном: бренд у лонга и у
     # шортса обязан быть один, иначе шортс не читается как его кусок.
     kara_marks = [

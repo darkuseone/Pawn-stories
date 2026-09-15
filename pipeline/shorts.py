@@ -135,6 +135,23 @@ FRAME_TOP_SHARE = 0.42
 # YouTube — название канала, описание, кнопки и прогресс-бар.
 SAFE_BOTTOM = 1660
 
+# ── КАРТОЧКА ПОД ТЕКСТОМ ──────────────────────────────────────────────
+# Полупрозрачная подложка под вопросом и под финальным призывом. Именно
+# карточка, а не свечение по буквам: стекло `type.glass_events` вокруг
+# текста делало вопрос размазанным, потому что `\blur18` размывает сами
+# буквы. Здесь заливка — отдельный слой, текст поверх неё резкий.
+PANEL_FILL = "&H0A121A&"    # тёмный тёплый, в порядке ASS это &HBBGGRR&
+PANEL_EDGE = "&HE8F4FF&"    # холодный светлый кант, как у стекла в длинном
+PANEL_ALPHA = "&H4A&"       # ~71% непрозрачности: фон под ней виден
+PANEL_PAD_X = 38
+PANEL_PAD_Y = 26
+PANEL_RADIUS = 26
+
+# Финальная карточка: призыв досмотреть длинный ролик. Висит последние
+# CTA_TAIL секунд куска, поверх картинки, звук не трогает.
+CTA_TAIL = 3.0
+CTA_FS = 74
+
 FONT = type_mod.font_name()
 
 # Вступление вопроса: punch 118%→100%, затем уезжает наверх. Не путать
@@ -183,6 +200,67 @@ def rank_beats(beats):
         out.append((score, b))
     out.sort(key=lambda x: -x[0])
     return out
+
+
+# ЧТО ДЕЛАЕТ КУСОК ИНТЕРЕСНЫМ. Отбор по одной доле оказался слишком
+# грубым: «развязка с числами» — это про то, где beats.py увидел цифры, а
+# не про то, где история цепляет. На ff-ep09 так и вышло: оба шортса
+# уехали на проходных абзацах, где просто чаще попадались числа.
+#
+# Здесь текст оценивается по признакам, которые в этом жанре и держат
+# внимание: сумма денег, единственность находки, запрет и уничтожение,
+# неожиданный поворот. Ни одного запроса к модели — пересборок у ролика
+# пять-десять, и платный отбор означал бы плату за каждую.
+#
+# СУММЫ В СЦЕНАРИИ НАПИСАНЫ СЛОВАМИ, А НЕ ЦИФРАМИ, и это не мелочь, а
+# причина, по которой первая версия отбора была слепой: текст пишется под
+# начитку («one million American dollars», «eleven thousand euros»), цифр
+# в нём почти нет, и regex по \d не находил НИ ОДНОЙ суммы во всём
+# ролике — ни в одном из 246 окон ff-ep09. Денежный признак молча весил
+# ноль везде, и куски ранжировались по чему угодно, кроме главного.
+NUMWORD = (r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+           r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+           r"twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|"
+           r"couple|several|dozens?|tens")
+MONEY = re.compile(
+    r"[$£€]\s?[\d,.]+"
+    r"|\b[\d,.]+\s?(?:dollars?|euros?|pounds?|thousand|million|billion)\b"
+    rf"|\b(?:{NUMWORD})[\s-]+(?:hundred|thousand|million|billion)\b"
+    r"|\b(?:hundreds?|thousands?|millions?|billions?)\s+(?:of\s+)?"
+    r"(?:dollars?|euros?|pounds?)\b", re.I)
+
+INTEREST = (
+    (2.6, MONEY),
+    (1.5, re.compile(r"\b(?:sold for|paid|worth|fortune|price|auction|listed for)\b", re.I)),
+    (1.8, re.compile(r"\b(?:only|rarest|rare|single|last|first|never|nobody|no one|entire)\b", re.I)),
+    (1.8, re.compile(r"\b(?:destroy(?:ed|ing)?|recall(?:ed)?|banned|illegal|sued|lawsuit|court|ordered|secret|hidden|wiped)\b", re.I)),
+    (1.4, re.compile(r"\b(?:turns out|actually|it turned out|realized|discovered|accident|mistake|forgot|somehow)\b", re.I)),
+    (0.9, re.compile(r"\b(?:but|except|instead|until)\b", re.I)),
+)
+
+# Начало фразы, которое само по себе работает крючком: вопрос, обещание
+# подробности, конкретный год. Шортс начинается с ПЕРВОГО предложения
+# куска, и если оно звучит как середина абзаца, зритель уходит на нём же.
+HOOK_START = re.compile(
+    r"^(?:here'?s|here is|what|why|how|imagine|picture|nobody|no one|someone|"
+    r"in \d{4}|by \d{4}|in (?:january|february|march|april|may|june|july|"
+    r"august|september|october|november|december)\b|"
+    r"the (?:asking price|number|answer|catch|problem|item|seller|listing)|"
+    r"a single|one of|that'?s (?:when|where|how|the))", re.I)
+
+
+def interest(text: str) -> float:
+    """Насколько кусок текста цепляет. Бесплатно, по лексике жанра."""
+    if not text:
+        return 0.0
+    score = 0.0
+    for w, rx in INTEREST:
+        hits = len(rx.findall(text))
+        if hits:
+            # Второе и третье совпадение весят меньше первого: абзац с
+            # перечислением сумм не в три раза интереснее абзаца с одной.
+            score += w * (1.0 + 0.35 * (min(hits, 4) - 1))
+    return score / max(1.0, len(text.split()) / 28.0)
 
 
 # Начало предложения, которое на слух — продолжение предыдущего.
@@ -309,6 +387,87 @@ def window_for(beat, marks, total, min_s=SHORT_MIN, max_s=SHORT_MAX,
     return t0, t1, lo, hi
 
 
+# Доля, в которой кусок начинается. Крючок ролика (первый абзац) написан
+# как крючок и в шортсе работает так же — занижать его незачем.
+BEAT_W = {"revelation": 1.0, "escalation": 0.75, "hook": 0.9, "setup": 0.35,
+          "reflection": 0.4, "cta": 0.2}
+
+# Фраза, которая ОБЕЩАЕТ продолжение, а не закрывает мысль. В середине
+# ролика это нормальная связка, но последним предложением шортса она
+# оставляет зрителя ни с чем: «дальше самое интересное» — и конец.
+DANGLING = re.compile(
+    r"\b(?:worth sitting|here'?s (?:the|what)|i want to be upfront|"
+    r"what happened next|the part that|comes next|turns out next|"
+    r"is the part|first,|to understand)\b", re.I)
+
+
+def window_score(part, kind: str) -> float:
+    """
+    Насколько кусок годится в самостоятельный шортс.
+
+    Считается по трём местам, каждое решает свою задачу: НАЧАЛО (досмотрят
+    ли первую секунду), КОНЕЦ (есть ли выплата) и СЕРЕДИНА (не провисает
+    ли). Сумма денег весит отдельно и ОСОБЕННО в конце: правило канала —
+    выплата ближе к концу куска, а не в его середине.
+    """
+    if not part:
+        return 0.0
+    first = (part[0].get("text") or "").strip()
+    last = (part[-1].get("text") or "").strip()
+    body = " ".join((m.get("text") or "") for m in part)
+    hook = 1.6 * interest(first) + (2.2 if HOOK_START.search(first) else 0.0)
+    if is_fragment_start(first):
+        hook -= 4.0          # начало с обрывка убивает кусок целиком
+    tail = part[-2:]
+    payoff = 1.4 * interest(last) + 0.6 * max(interest(m.get("text") or "")
+                                              for m in tail)
+    if MONEY.search(" ".join((m.get("text") or "") for m in tail)):
+        payoff += 1.8        # сумма прозвучала под конец — это и есть выплата
+    if DANGLING.search(last):
+        payoff -= 4.0        # кусок обрывается на обещании, а не на ответе
+    core = 2.0 * hook + 1.9 * payoff + 0.9 * interest(body)
+    # КУСОК БЕЗ СУММЫ — НЕ ШОРТС ЭТОГО КАНАЛА. Слова про суд, запрет и
+    # уничтожение набирают вес и сами по себе: на ff-ep09 судебная справка
+    # без единой цифры («ordered recalled and destroyed», «the ruling made
+    # it unmistakably clear») обошла куски с настоящей выплатой. Жанр
+    # держится на сумме — без неё кусок пересказывает предысторию.
+    core *= 1.0 if MONEY.search(body) else 0.72
+    return core * (0.65 + 0.5 * BEAT_W.get(kind, 0.3))
+
+
+def scan_windows(marks, beats, total):
+    """
+    Все куски по границам предложений, отсортированные по window_score.
+
+    Возвращает список (score, t0, t1, lo, hi, beat) — beat берётся по
+    началу куска и нужен дальше только ради номера блока (свой вопрос в
+    шапке) и названия доли в логе.
+    """
+    def beat_at(t):
+        for b in beats:
+            if b.start - 0.01 <= t <= b.end + 0.01:
+                return b
+        return beats[0] if beats else None
+
+    out = []
+    for i in range(len(marks)):
+        for j in range(i, len(marks)):
+            dur = marks[j]["end"] - marks[i]["start"]
+            if dur > SHORT_MAX:
+                break
+            if dur < SHORT_MIN:
+                continue
+            b = beat_at(marks[i]["start"])
+            if b is None:
+                continue
+            part = marks[i:j + 1]
+            out.append((window_score(part, b.kind),
+                        max(0.0, marks[i]["start"] - 0.15),
+                        min(total, marks[j]["end"] + 0.35), i, j, b))
+    out.sort(key=lambda x: -x[0])
+    return out
+
+
 def pick_windows(beats, marks, total, want=2):
     """
     Два куска, которые не пересекаются и не стоят вплотную.
@@ -326,30 +485,43 @@ def pick_windows(beats, marks, total, want=2):
     недостающее — на коротком ролике с одной сильной развязкой второго
     блока может не быть вовсе, и это не повод остаться без второго шортса.
     """
-    def take(candidates, out, require_new_block):
-        for _, b in candidates:
+    # ОКНА ПЕРЕБИРАЮТСЯ ПО ПРЕДЛОЖЕНИЯМ, А НЕ СТРОЯТСЯ ВОКРУГ ДОЛИ.
+    # Раньше кандидат был один на долю: rank_beats выбирала долю, а
+    # window_for наращивал окно назад от её конца — и чем оно начиналось,
+    # никто не смотрел. На ff-ep09 так и вышло: «By every account, it
+    # plays roughly like Tetris always plays» в начале шортса — это
+    # антикрючок, зритель уходит на первой же секунде.
+    #
+    # Теперь перебираются ВСЕ окна по границам предложений (98 фраз —
+    # это тысячи вариантов, доли секунды счёта), и каждое оценивается
+    # window_score: чем начинается, чем заканчивается, что внутри. Доля
+    # из beats осталась множителем, а не единственным критерием.
+    cand = scan_windows(marks, beats, total)
+
+    # «Другой блок» — ПРЕДПОЧТЕНИЕ, А НЕ ЦЕНА ЛЮБОЙ ЦЕНОЙ. Требование
+    # завелось, чтобы у двух шортсов были разные вопросы в шапке, и это
+    # верно — пока в другом блоке есть что показать. На ff-ep09 оно
+    # притащило вторым куском судебную справку без единой суммы просто
+    # потому, что она из другой главы. Слабого кандидата (меньше доли
+    # FLOOR от лучшего) первый проход больше не берёт: второй проход
+    # возьмёт сильный кусок, пусть и из той же главы.
+    floor = cand[0][0] * 0.62 if cand else 0.0
+
+    def take(out, require_new_block):
+        for score, t0, t1, lo, hi, b in cand:
             if len(out) >= want:
                 break
-            if require_new_block and any(b.block == o[4].block for o in out):
+            if require_new_block and (any(b.block == o[4].block for o in out)
+                                      or score < floor):
                 continue
-            w = window_for(
-                b, marks, total,
-                block_t0=min((x.start for x in beats if x.block == b.block),
-                             default=0.0))
-            if not w:
-                continue
-            t0, t1 = w[0], w[1]
             if any(not (t1 <= o0 or t0 >= o1) for o0, o1, *_ in out):
                 continue        # пересекается с уже взятым
             if any(min(abs(t0 - o1), abs(o0 - t1)) < 12.0 for o0, o1, *_ in out):
                 continue        # стоит вплотную
-            out.append((t0, t1, w[2], w[3], b))
+            out.append((t0, t1, lo, hi, b))
         return out
 
-    ranked = rank_beats(beats)
-    out = take(ranked, [], require_new_block=True)
-    out = take(ranked, out, require_new_block=False)
-    return out
+    return take(take([], require_new_block=True), require_new_block=False)
 
 
 # ─────────────────────── СУБТИТРЫ ───────────────────────
@@ -529,6 +701,53 @@ def sub_center(frame: dict) -> int:
     return int((frame["bottom"] + SAFE_BOTTOM) / 2)
 
 
+def rounded_box(w: int, h: int, r: int) -> str:
+    """
+    Прямоугольник со скруглёнными углами командами рисования libass (\\p1).
+
+    Углы — квадратичные безье через саму вершину: ASS рисует ими дугу,
+    визуально неотличимую от радиуса. Координаты отсчитываются от точки
+    \\pos при \\an7, то есть от левого верхнего угла плашки.
+    """
+    r = max(0, min(r, w // 2, h // 2))
+    return (f"m {r} 0 l {w - r} 0 b {w} 0 {w} 0 {w} {r} "
+            f"l {w} {h - r} b {w} {h} {w} {h} {w - r} {h} "
+            f"l {r} {h} b 0 {h} 0 {h} 0 {h - r} "
+            f"l 0 {r} b 0 0 0 0 {r} 0")
+
+
+def panel_events(lines, size: int, cy: int, start: float, end: float,
+                 layer: int = 0, extra: str = "") -> list[str]:
+    """
+    Полупрозрачная карточка под текстом: заливка + тонкий светлый кант.
+
+    ЭТО НЕ СВЕЧЕНИЕ ТЕКСТА. Первая попытка сделала «табличку» стеклом
+    `type.glass_events` — свечением по самим буквам (`\\blur18`), и вопрос
+    из-за него читался размазанным. Карточка должна быть подложкой, а
+    текст на ней — резким: заливка рисуется отдельным слоем (\\p1), текст
+    идёт поверх без единого блюра.
+
+    Фон над кадром и под ним — уже размытая копия кадра (см. render_short),
+    поэтому полупрозрачная заливка поверх него читается как матовое
+    стекло, и настоящий blur под плашкой рисовать незачем.
+    """
+    if not lines:
+        return []
+    text_w = int(type_mod.measure_width(lines, size))
+    bw = min(W - 2 * BOX_MARGIN, text_w + 2 * PANEL_PAD_X)
+    bh = int(size * 1.22 * len(lines)) + 2 * PANEL_PAD_Y
+    x0, y0 = (W - bw) // 2, int(cy - bh / 2)
+    box = rounded_box(bw, bh, PANEL_RADIUS)
+    tag = f"\\an7\\pos({x0},{y0})\\bord0\\shad0{extra}\\p1"
+    t0, t1 = ass_time(start), ass_time(end)
+    return [
+        f"Dialogue: {layer},{t0},{t1},PANEL,,0,0,0,,"
+        f"{{{tag}\\1c{PANEL_FILL}\\1a{PANEL_ALPHA}}}{box}{{\\p0}}",
+        f"Dialogue: {layer},{t0},{t1},PANEL,,0,0,0,,"
+        f"{{{tag}\\1a&HFF&\\bord2\\3c{PANEL_EDGE}\\3a&H90&}}{box}{{\\p0}}",
+    ]
+
+
 def karaoke_ready(marks, lo, hi) -> bool:
     """Есть ли ИЗМЕРЕННЫЕ тайм-коды слов у всех предложений куска."""
     part = marks[lo:hi + 1]
@@ -536,17 +755,24 @@ def karaoke_ready(marks, lo, hi) -> bool:
 
 
 def build_ass(subs, layout: dict, out: Path, word_marks=None,
-              t0: float = 0.0, t1: float = 0.0, frame: dict = None):
+              t0: float = 0.0, t1: float = 0.0, frame: dict = None,
+              cta: str = ""):
     """
-    Шапка — то же стекло (glow/edge/fill), что название и итог в длинном
-    ролике: непрозрачной осталась только подпись внизу. Раньше здесь стоял
-    плоский белый текст с чёрной обводкой безо всякого блика позади него —
-    решили, что шапка без стекла читается голо на фоне остального канала,
-    и попросили вернуть тот же приём. \\blur18 у слоя Glow и держит вид
-    размытой таблички под текстом — отдельный drawbox не понадобился.
+    Шапка — РЕЗКИЙ текст на полупрозрачной карточке (`panel_events`).
+
+    До этого шапка была стеклом `type.glass_events`: свечение шло по самим
+    буквам (`\\blur18`), и вопрос читался размазанным — на готовом шортсе
+    это сразу видно. Подложка и свечение это разные вещи: карточка должна
+    быть ПОД текстом отдельным слоем, а буквы на ней — без единого блюра.
+    Фон над кадром уже размыт (render_short), поэтому полупрозрачная
+    заливка поверх него и даёт матовое стекло.
 
     Вступление вопроса в libass: масштаб 118%→100% и \\move наверх, тот же
     приём, что был. Не Remotion, не deshake, не второй Ken Burns.
+
+    ПРИЗЫВ В КОНЦЕ (`cta`) — карточка на последние CTA_TAIL секунд: шортс
+    обязан звать на длинный ролик, иначе он просто отдаёт развязку и
+    отпускает зрителя.
 
     ПОДСВЕТКА ЗАЛИВКОЙ. word_marks — предложения с измеренными тайм-кодами
     слов (assets.words_between по посимвольному выравниванию ElevenLabs).
@@ -580,9 +806,9 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Glow,{FONT},{q_size},{white},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,40,40,40,1
-Style: Edge,{FONT},{q_size},{white},&H00E8F4FF,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,5,40,40,40,1
-Style: Fill,{FONT},{q_size},{white},&H00E8F4FF,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,40,40,40,1
+Style: PANEL,{FONT},20,{white},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: Q,{FONT},{q_size},{white},{black},&H00000000,-1,0,0,0,100,100,0,0,1,5,0,5,40,40,40,1
+Style: CTA,{FONT},{CTA_FS},{white},{black},&H00000000,-1,0,0,0,100,100,0,0,1,4,0,5,40,40,40,1
 Style: SUB,{FONT},{sub_size},{sub_fill},{black},&H00000000,-1,0,0,0,100,100,0,0,1,7,0,5,{SUB_MARGIN},{SUB_MARGIN},60,1
 
 [Events]
@@ -598,15 +824,37 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         move_end = round((INTRO_HOLD + INTRO_MOVE) * 1000)
         move = (f"\\move({cx},{intro_cy},{cx},{top_cy},{hold_ms},{move_end})"
                 f"\\fscx118\\fscy118\\t(0,{PUNCH_MS},\\fscx100\\fscy100)")
+        # Карточка едет вместе с текстом: те же \move и punch, только
+        # точка отсчёта у неё левый верхний угол (\an7), а у текста центр.
+        pw = min(W - 2 * BOX_MARGIN,
+                 int(type_mod.measure_width(layout["lines"], q_size))
+                 + 2 * PANEL_PAD_X)
+        ph = int(q_size * 1.22 * len(layout["lines"])) + 2 * PANEL_PAD_Y
+        p_move = (f"\\move({cx - pw // 2},{intro_cy - ph // 2},"
+                  f"{cx - pw // 2},{top_cy - ph // 2},{hold_ms},{move_end})"
+                  f"\\fscx118\\fscy118\\t(0,{PUNCH_MS},\\fscx100\\fscy100)")
+        box = rounded_box(pw, ph, PANEL_RADIUS)
+        for tag in (f"\\1c{PANEL_FILL}\\1a{PANEL_ALPHA}",
+                    f"\\1a&HFF&\\bord2\\3c{PANEL_EDGE}\\3a&H90&"):
+            rows.append(
+                f"Dialogue: 0,{ass_time(0)},{ass_time(99999)},PANEL,,0,0,0,,"
+                f"{{\\an7{p_move}\\bord0\\shad0{tag}\\fad(90,0)\\p1}}"
+                f"{box}{{\\p0}}")
         rows.append(
-            f"Dialogue: 0,{ass_time(0)},{ass_time(99999)},Glow,,0,0,0,,"
-            f"{{\\an5{move}\\blur18\\1a&H70&\\fad(90,0)}}" + text)
+            f"Dialogue: 2,{ass_time(0)},{ass_time(99999)},Q,,0,0,0,,"
+            f"{{\\an5{move}\\fad(90,0)}}" + text)
+    if cta and t1 > t0:
+        dur = t1 - t0
+        c_start = max(0.0, dur - CTA_TAIL)
+        c_lines = type_mod.wrap_to_width(cta, CTA_FS, W - 2 * BOX_MARGIN - 2 * PANEL_PAD_X,
+                                         max_lines=2) or [cta]
+        c_cy = int(frame["bottom"] - CTA_FS * 1.22 * len(c_lines) / 2 - PANEL_PAD_Y - 40)
+        rows += panel_events(c_lines, CTA_FS, c_cy, c_start, dur,
+                             layer=5, extra="\\fad(220,120)")
         rows.append(
-            f"Dialogue: 2,{ass_time(0)},{ass_time(99999)},Edge,,0,0,0,,"
-            f"{{\\an5{move}\\blur0.4\\3a&H50&\\1a&H28&\\fad(90,0)}}" + text)
-        rows.append(
-            f"Dialogue: 4,{ass_time(0)},{ass_time(99999)},Fill,,0,0,0,,"
-            f"{{\\an5{move}\\blur0.8\\1a&H18&\\fad(90,0)}}" + text)
+            f"Dialogue: 6,{ass_time(c_start)},{ass_time(dur)},CTA,,0,0,0,,"
+            f"{{\\an5\\pos({W // 2},{c_cy})\\fad(220,120)}}"
+            + "\\N".join(ass_escape(l) for l in c_lines))
     kara = []
     if word_marks:
         kara = type_mod.sub_events(word_marks, t0, t1 or 10 ** 9, sub_size,
@@ -662,17 +910,25 @@ def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
     """
     ass_f = f"ass={ass.as_posix()}:fontsdir={type_mod.fontsdir()}"
     fc = (
-        f"[0:v]crop={frame['cw']}:{frame['ch']}:{frame['cx']}:{frame['cy']},"
+        f"[0:v]setpts=PTS-STARTPTS,"
+        f"crop={frame['cw']}:{frame['ch']}:{frame['cx']}:{frame['cy']},"
         f"split=2[fg][bgsrc];"
         f"[bgsrc]scale={W}:{H}:force_original_aspect_ratio=increase,"
-        f"crop={W}:{H},boxblur=40:2,eq=brightness=-0.16:saturation=0.82[bg];"
+        f"crop={W}:{H},boxblur=34:2,eq=brightness=-0.04:saturation=0.9[bg];"
         f"[fg]scale={FRAME_W}:{frame['fh']}:flags=lanczos[fgs];"
         f"[bg][fgs]overlay=0:{frame['top']}:shortest=1,setsar=1[v];"
-        f"[v]{ass_f}[vout]"
+        f"[v]{ass_f}[vout];"
+        # ЗВУК ЧЕРЕЗ ФИЛЬТР, А НЕ НАПРЯМУЮ. С -map 0:a дорожка уезжала в
+        # шортс с ИСХОДНЫМИ тайм-кодами длинного ролика: у куска с 918-й
+        # секунды первый аудиопакет получал pts 42.7 при видео от нуля, и
+        # первые сорок секунд шортса шли в тишине — ровно то, что видно
+        # как «озвучка пропадает». asetpts сбрасывает начало в ноль,
+        # aresample добивает дырки и держит дорожку непрерывной.
+        f"[0:a]asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[aout]"
     )
     run(["ffmpeg", "-v", "error", "-y",
          "-ss", f"{t0:.3f}", "-t", f"{t1-t0:.3f}", "-i", str(src),
-         "-filter_complex", fc, "-map", "[vout]", "-map", "0:a",
+         "-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
          "-r", str(FPS),
          "-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast",
          "-pix_fmt", "yuv420p", "-profile:v", "high",
@@ -800,7 +1056,12 @@ def main(job_path, want=2):
             f"{total/60:.1f} мин, а куски не должны пересекаться и стоять "
             f"вплотную — на коротком ролике второго места не остаётся")
 
-    log("── оформление шапки: Oswald, стекло (glow/edge/fill), субтитры белым")
+    # Призыв досмотреть длинный ролик — тот же, что стоит в концовке
+    # самого ролика (channel/defaults.json → outro_cta), чтобы шортс и
+    # ролик звали одними словами. Пустое значение = карточки нет.
+    cta = (job.get("shorts_cta") or job.get("outro_cta") or "").strip()
+    log("── оформление: Oswald, карточка под вопросом, субтитры белым"
+        + (f", призыв в конце «{cta}»" if cta else ", без призыва в конце"))
 
     made, questions_used = [], []
     for n, (t0, t1, lo, hi, beat) in enumerate(windows, 1):
@@ -815,7 +1076,7 @@ def main(job_path, want=2):
         kara_ok = karaoke_ready(marks, lo, hi)
         ass = build_ass(subs, layout, out / f"short_{n}.ass",
                         word_marks=marks[lo:hi + 1] if kara_ok else None,
-                        t0=t0, t1=t1, frame=frame)
+                        t0=t0, t1=t1, frame=frame, cta=cta)
         dst = out / f"short_{n}.mp4"
         log(f"── шортс {n}: {t0:.1f}–{t1:.1f} с ({t1-t0:.1f} с), "
             f"доля «{beat.kind}», блок {beat.block}, субтитров {len(subs)}, "
