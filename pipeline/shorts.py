@@ -934,16 +934,29 @@ def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
          "-pix_fmt", "yuv420p", "-profile:v", "high",
          "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
          str(dst)])
+    # ЗВУК ПРОВЕРЯЕТСЯ ЗАМЕРОМ, А НЕ НА ВЕРУ. У роликов, собранных до
+    # фикса build.voice_with_pauses, разметка аудиодорожки врёт: после
+    # паузы главы быстрый переход попадает в пустоту, и кусок выходит
+    # немым или с обрезанным звуком. Молчать об этом нельзя — именно так
+    # два шортса уехали к человеку без озвучки.
+    v, a = duration_of(dst), duration_of(dst, "a")
+    if a < v * 0.9:
+        log(f"  ! звука в куске {a:.1f} с при видео {v:.1f} с. Дорожка "
+            f"исходного ролика собрана до фикса разрывов — пересобери его "
+            f"(stage: render), одним shorts.py это не лечится")
     return dst
 
 
-def duration_of(p: Path) -> float:
-    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
-                        "format=duration", "-of", "csv=p=0", str(p)],
+def duration_of(p: Path, stream: str = "") -> float:
+    """Длина файла, а с stream='a' или 'v' — длина этой дорожки."""
+    sel = ["-select_streams", stream] if stream else []
+    what = "stream=duration" if stream else "format=duration"
+    r = subprocess.run(["ffprobe", "-v", "error", *sel, "-show_entries",
+                        what, "-of", "csv=p=0", str(p)],
                        capture_output=True, text=True)
     try:
-        return float(r.stdout.strip())
-    except ValueError:
+        return float(r.stdout.strip().splitlines()[0].rstrip(","))
+    except (ValueError, IndexError):
         return 0.0
 
 

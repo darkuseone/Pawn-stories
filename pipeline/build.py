@@ -1121,39 +1121,86 @@ def voice_with_pauses(voice: Path, boundaries, pause: float, tmp: Path) -> Path:
     """
     Копия начитки с настоящей тишиной на границах глав.
 
-    Кэш (assets/voice_full.m4a) не трогается — режется КОПИЯ во временной
-    папке. Тишина — отдельный файл anullsrc, куски голоса вырезаются
-    -ss/-t с перекодированием (не stream copy): точность реза важнее
-    скорости, а на получасовой начитке перекодировать пять-шесть кусков
-    и один синус тишины — секунды, не минуты.
+    Кэш (assets/voice_full.m4a) не трогается — собирается КОПИЯ во
+    временной папке.
+
+    ОДИН ВЫЗОВ FFMPEG, А НЕ СКЛЕЙКА КОНТЕЙНЕРОВ. Первая версия резала
+    голос на куски отдельными вызовами (-ss/-t), кодировала каждый в
+    m4a и склеивала их с тишиной через concat-демуксер с `-c copy`. Это
+    ТИХО ЛОМАЛО ВРЕМЕННУЮ РАЗМЕТКУ дорожки: у каждого куска AAC свои
+    priming-сэмплы и свой edit list, демуксер их не сводит, и на каждой
+    склейке в дорожке появлялась дыра по PTS. На ff-ep09 (пять пауз) их
+    было пять — 15, 32, 48, 60 и 78 секунд, — а суммарное число сэмплов
+    при этом оставалось прежним: часть пакетов просто уезжала вперёд по
+    времени. Ролик звучал, но звук после первой же паузы жил не там, где
+    показывала его разметка, и любой быстрый переход по дорожке (а
+    шортсы режутся именно так) находил на этом месте пустоту — отсюда
+    «озвучка пропадает» в шортсах со второй половины ролика.
+
+    Теперь голос и тишина сводятся одним `filter_complex concat`:
+    atrim режет по сэмплам, asetpts выставляет каждому куску
+    непрерывное время, и на выходе дорожка без единого разрыва. Один
+    проход перекодирования на получасовой начитке — секунды.
     """
-    silence = tmp / "_chapter_silence.m4a"
-    if not silence.exists():
-        subprocess.run(
-            f"ffmpeg -y -f lavfi -i anullsrc=r=48000:cl=stereo -t {pause:.3f} "
-            f"-c:a aac -b:a 192k {shlex.quote(str(silence))}",
-            shell=True, check=True, capture_output=True)
-    pieces, prev_t = [], 0.0
-    for k, (t_orig, _name) in enumerate(boundaries):
-        seg = tmp / f"_voice_seg_{k:02d}.m4a"
-        if not seg.exists():
-            subprocess.run(
-                f"ffmpeg -y -ss {prev_t:.3f} -i {shlex.quote(str(voice))} "
-                f"-t {t_orig - prev_t:.3f} -c:a aac -b:a 192k "
-                f"{shlex.quote(str(seg))}",
-                shell=True, check=True, capture_output=True)
-        pieces += [seg, silence]
+    parts, prev_t = [], 0.0
+    for t_orig, _name in boundaries:
+        parts.append((prev_t, t_orig))
         prev_t = t_orig
-    tail = tmp / "_voice_tail.m4a"
-    if not tail.exists():
-        subprocess.run(
-            f"ffmpeg -y -ss {prev_t:.3f} -i {shlex.quote(str(voice))} "
-            f"-c:a aac -b:a 192k {shlex.quote(str(tail))}",
-            shell=True, check=True, capture_output=True)
-    pieces.append(tail)
+    parts.append((prev_t, None))
+
+    steps, labels = [], []
+    for i, (a, b) in enumerate(parts):
+        trim = f"atrim=start={a:.3f}" + (f":end={b:.3f}" if b is not None else "")
+        steps.append(f"[0:a]{trim},asetpts=N/SR/TB[v{i}]")
+        labels.append(f"[v{i}]")
+        if i < len(parts) - 1:
+            steps.append(
+                f"anullsrc=r=48000:cl=stereo,atrim=duration={pause:.3f},"
+                f"asetpts=N/SR/TB[s{i}]")
+            labels.append(f"[s{i}]")
+    steps.append("".join(labels) + f"concat=n={len(labels)}:v=0:a=1[out]")
+
     out = tmp / "voice_paused.m4a"
-    render.concat_segments(pieces, out)
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-i", str(voice),
+         "-filter_complex", ";".join(steps), "-map", "[out]",
+         "-c:a", "aac", "-b:a", "192k", str(out)],
+        check=True, capture_output=True)
+    gap = audio_gap(out)
+    if gap:
+        raise SystemExit(
+            f"в начитке с паузами разрыв времени {gap[0]:.1f} -> {gap[1]:.1f} с.\n"
+            "Так выглядела склейка кусков через concat -c copy: ролик звучит, "
+            "но разметка дорожки врёт, и шортсы режут из неё тишину.")
     return out
+
+
+def audio_gap(path: Path, limit: float = 0.5):
+    """
+    Первый разрыв времени в аудиодорожке, если он есть.
+
+    Проверка стоит ноль (один ffprobe по индексу, без декодирования) и
+    ловит целый класс ошибок: дорожка, собранная склейкой контейнеров,
+    звучит нормально при последовательном чтении и разваливается на
+    первом же быстром переходе. Молча такое уезжает в готовый ролик.
+    """
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a",
+         "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True)
+    prev = None
+    for line in r.stdout.splitlines():
+        s = line.strip().rstrip(",")
+        if not s:
+            continue
+        try:
+            t = float(s)
+        except ValueError:
+            continue
+        if prev is not None and t - prev > limit:
+            return prev, t
+        prev = t
+    return None
 
 
 # ───────────────────────── НАСТРОЙКИ ИЗ JSON ─────────────────────────
@@ -1895,6 +1942,16 @@ def main(job_path):
     log("── финал")
     final = out / "final.mp4"
     render.mux(silent, mixed, final)
+    # ДОРОЖКА ГОТОВОГО РОЛИКА — БЕЗ РАЗРЫВОВ ПО ВРЕМЕНИ. Проверка стоит
+    # один ffprobe по индексу и ловит ровно то, на чём канал уже обжёгся:
+    # ролик звучит подряд, а разметка дорожки врёт, и любой быстрый
+    # переход по ней (шортсы режутся именно так) попадает в пустоту.
+    gap = audio_gap(final)
+    if gap:
+        raise SystemExit(
+            f"в звуке готового ролика разрыв времени {gap[0]:.1f} -> "
+            f"{gap[1]:.1f} с — дорожка собрана так, что её разметка врёт. "
+            "Чинить в сборке звука, а не здесь.")
     # ТОТ ЖЕ РОЛИК БЕЗ ВЖЖЁННЫХ НАДПИСЕЙ — исходник для шортсов. Мукс
     # копирующий (-c copy), то есть секунды и ни одного перекодирования:
     # цветокор, переходы и движение камеры уже в кадре, отличается только
