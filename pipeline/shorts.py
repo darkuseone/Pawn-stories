@@ -38,10 +38,13 @@ scale+crop — см. шапку build.py), и лимит Actions в 6 часов
 делся.
 
 При этом всё, что здесь нужно, ffmpeg делает нативно: crop+scale для 9:16,
-libass для шапки и субтитров одним файлом. Стекло и жёлтый только в
-длинном ролике; шортс непрозрачный — Oswald, белый, чёрная обводка.
-Вступление вопроса: слой с \\blur гаснет, резкий слой punch 118%→100%,
-вспышка обводки, уезжает наверх. Кусок не стартует с обрывка предложения.
+libass для шапки и субтитров одним файлом. Шапка — то же стекло
+(glow/edge/fill), что название и итог в длинном ролике; жёлтого в шортсе
+по-прежнему нет, субтитры остаются непрозрачными — Oswald, белый, чёрная
+обводка. Вступление вопроса: punch 118%→100%, уезжает наверх. Кусок не
+стартует с обрывка предложения. Полоса вжжённых субтитров длинного ролика,
+которая иначе просвечивала бы под шапкой шортса вторым, чужим субтитром,
+смазывается region-blur'ом до наложения ass (см. render_short).
 
 
 Remotion имело бы смысл, если бы понадобилась настоящая моушн-графика:
@@ -116,15 +119,12 @@ SUB_Y = 0.66
 
 FONT = type_mod.font_name()
 
-# Вступление вопроса: blur-слой гаснет, резкий слой punch 118%→100%
-# и короткая вспышка обводки, затем уезжает наверх. Не путать с прежним
-# «крупный вопрос на полкадра, потом ужимается в шапку» — масштаб ровно
-# 118→100, как в ТЗ, не 190%.
+# Вступление вопроса: punch 118%→100%, затем уезжает наверх. Не путать
+# с прежним «крупный вопрос на полкадра, потом ужимается в шапку» —
+# масштаб ровно 118→100, как в ТЗ, не 190%.
 INTRO_HOLD = 0.85
 INTRO_MOVE = 0.55
 PUNCH_MS = 380
-BLUR_END = 0.42
-OUTLINE = 8
 
 
 def log(*a):
@@ -445,17 +445,25 @@ def fallback_question(job) -> str:
 
 def header_layout(question: str, style: str = "") -> dict:
     """
-    Геометрия шапки: вопрос сверху, без панели.
+    Геометрия шапки: вопрос сверху, стекло (см. build_ass), без плоской
+    заливки-плашки — сам блик blur18 читается как размытая табличка под
+    текстом, без отдельного drawbox.
+
+    Кегль поднят вдвое (64/54/44 -> 96/80/66) той же логикой, что и у
+    субтитров длинного ролика: маленький текст на телефоне в ленте
+    проигрывает всему остальному в кадре. wrap ужат с 24 до 17 символов
+    на строку — иначе больший кегль тут же упирался бы в fit_size и
+    возвращался к прежнему размеру, съедая весь выигрыш.
 
     Пустой вопрос — пустой макет: без него десять секунд провисела бы
     пустая анимация без единой буквы.
     style оставлен в сигнатуре, чтобы старые вызовы не падали, и игнорируется.
     """
-    lines = wrap(question.strip(), 24) if question else []
+    lines = wrap(question.strip(), 17) if question else []
     if not lines:
         return dict(lines=[], size=0, cx=W // 2, intro_cy=0, block_cy=0)
-    size = 64 if len(lines) <= 2 else (54 if len(lines) == 3 else 44)
-    size = fit_size(lines, W - 2 * BOX_MARGIN, size, floor=34)
+    size = 96 if len(lines) <= 2 else (80 if len(lines) == 3 else 66)
+    size = fit_size(lines, W - 2 * BOX_MARGIN, size, floor=44)
     line_h = size * 1.22
     ph = line_h * len(lines)
     block_cy = BOX_MARGIN + ph / 2
@@ -472,11 +480,15 @@ def karaoke_ready(marks, lo, hi) -> bool:
 def build_ass(subs, layout: dict, out: Path, word_marks=None,
               t0: float = 0.0, t1: float = 0.0):
     """
-    Шапка и субтитры: Oswald, белый, чёрная обводка, без стекла и без жёлтого.
+    Шапка — то же стекло (glow/edge/fill), что название и итог в длинном
+    ролике: непрозрачной осталась только подпись внизу. Раньше здесь стоял
+    плоский белый текст с чёрной обводкой безо всякого блика позади него —
+    решили, что шапка без стекла читается голо на фоне остального канала,
+    и попросили вернуть тот же приём. \\blur18 у слоя Glow и держит вид
+    размытой таблички под текстом — отдельный drawbox не понадобился.
 
-    Вступление вопроса в libass: слой с сильным \\blur гаснет, резкий слой
-    \\fad + масштаб 118%→100%, вспышка обводки, затем \\move наверх.
-    Не Remotion, не deshake, не второй Ken Burns.
+    Вступление вопроса в libass: масштаб 118%→100% и \\move наверх, тот же
+    приём, что был. Не Remotion, не deshake, не второй Ken Burns.
 
     ПОДСВЕТКА ЗАЛИВКОЙ. word_marks — предложения с измеренными тайм-кодами
     слов (assets.words_between по посимвольному выравниванию ElevenLabs).
@@ -503,8 +515,9 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: QGLOW,{FONT},{q_size},{white},{black},&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,40,40,40,1
-Style: Q,{FONT},{q_size},{white},{black},&H00000000,-1,0,0,0,100,100,0,0,1,{OUTLINE},0,5,40,40,40,1
+Style: Glow,{FONT},{q_size},{white},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,40,40,40,1
+Style: Edge,{FONT},{q_size},{white},&H00E8F4FF,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,5,40,40,40,1
+Style: Fill,{FONT},{q_size},{white},&H00E8F4FF,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,40,40,40,1
 Style: SUB,{FONT},{sub_size},{sub_fill},{black},&H00000000,-1,0,0,0,100,100,0,0,1,7,0,5,{SUB_MARGIN},{SUB_MARGIN},60,1
 
 [Events]
@@ -518,16 +531,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         top_cy = int(layout["block_cy"])
         hold_ms = round(INTRO_HOLD * 1000)
         move_end = round((INTRO_HOLD + INTRO_MOVE) * 1000)
+        move = (f"\\move({cx},{intro_cy},{cx},{top_cy},{hold_ms},{move_end})"
+                f"\\fscx118\\fscy118\\t(0,{PUNCH_MS},\\fscx100\\fscy100)")
         rows.append(
-            f"Dialogue: 0,{ass_time(0)},{ass_time(BLUR_END)},QGLOW,,0,0,0,,"
-            f"{{\\an5\\pos({cx},{intro_cy})\\blur22\\fad(50,280)\\alpha&H48&}}"
-            + text)
+            f"Dialogue: 0,{ass_time(0)},{ass_time(99999)},Glow,,0,0,0,,"
+            f"{{\\an5{move}\\blur18\\1a&H70&\\fad(90,0)}}" + text)
         rows.append(
-            f"Dialogue: 2,{ass_time(0)},{ass_time(99999)},Q,,0,0,0,,"
-            f"{{\\an5\\move({cx},{intro_cy},{cx},{top_cy},{hold_ms},{move_end})"
-            f"\\fscx118\\fscy118\\t(0,{PUNCH_MS},\\fscx100\\fscy100)"
-            f"\\bord{OUTLINE}\\t(120,200,\\bord16)\\t(200,360,\\bord{OUTLINE})"
-            f"\\fad(90,0)}}" + text)
+            f"Dialogue: 2,{ass_time(0)},{ass_time(99999)},Edge,,0,0,0,,"
+            f"{{\\an5{move}\\blur0.4\\3a&H50&\\1a&H28&\\fad(90,0)}}" + text)
+        rows.append(
+            f"Dialogue: 4,{ass_time(0)},{ass_time(99999)},Fill,,0,0,0,,"
+            f"{{\\an5{move}\\blur0.8\\1a&H18&\\fad(90,0)}}" + text)
     kara = []
     if word_marks:
         kara = type_mod.sub_events(word_marks, t0, t1 or 10 ** 9, sub_size,
@@ -571,6 +585,18 @@ def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
     Плашки шапки больше не рисует ffmpeg (drawbox) — их кладёт сам libass
     через ass-фильтр (BorderStyle=3, см. build_ass), поэтому здесь только
     кадрирование, масштаб и один слой субтитров.
+
+    ДВОЙНЫЕ СУБТИТРЫ. src — это final.mp4, а в нём уже вжжены субтитры
+    длинного ролика (type.sub_long_y, кегль 116, \\an4 по центру блока).
+    crop+scale в 9:16 меняют только ширину, доля по высоте сохраняется —
+    и без этой правки под новой шапкой шортса всплывал обрывок чужой
+    строки: два разных субтитра на экране разом, замечено на готовом
+    шортсе. Текст уже впечён в пиксели, стереть его можно только смазав:
+    у boxblur своего окна по кадру нет, поэтому кадр после scale делится
+    (split) на две ветки, из одной вырезается (crop) ровно полоса старой
+    подписи, размывается (boxblur) и кладётся обратно тем же прямоугольником
+    (overlay) — и только на этот уже подчищенный кадр ложится ass с шапкой
+    и своими субтитрами.
     """
     # 1080 * 9/16 = 607.5; libx264 требует чётные размеры, берём 608.
     # hqdn3d ПОСЛЕ crop, ДО scale: в final.mp4 уже запечены движение камеры
@@ -580,15 +606,33 @@ def render_short(src: Path, t0: float, t1: float, ass: Path, dst: Path,
     # запечённым Ken Burns и качают сами.
     crop_w = 608
     ass_f = f"ass={ass.as_posix()}:fontsdir={type_mod.fontsdir()}"
-    vf = (
-        f"crop={crop_w}:1080:(iw-{crop_w})/2:0,"
-        f"hqdn3d=1.2:1.2:3:3,"
-        f"scale={W}:{H}:flags=lanczos,setsar=1,"
-        f"{ass_f}"
+
+    # Полоса старой подписи в координатах ГОТОВОГО 1080-кадра, тем же
+    # расчётом, что у type.sub_long_y: центр на 1080-BOTTOM-half, блок
+    # высотой 2*half. Однострочное событие короче двухстрочного, но их
+    # нижний край совпадает (высота всегда считается от нижнего отступа) —
+    # поэтому верх полосы берём по худшему случаю (двухстрочный), низ по
+    # общему нижнему краю, плюс небольшой запас на обводку и тень.
+    fs, mgn = type_mod.SUB_LONG_FS, type_mod.SUB_LONG_BOTTOM
+    half2 = int(fs * 1.2 * 2 / 2)
+    pad = 18
+    top_1080 = 1080 - mgn - 2 * half2 - pad
+    bot_1080 = 1080 - mgn + pad
+    band_y = max(0, round(top_1080 / 1080 * H))
+    band_h = min(H, round(bot_1080 / 1080 * H)) - band_y
+
+    fc = (
+        f"[0:v]crop={crop_w}:1080:(iw-{crop_w})/2:0,"
+        f"hqdn3d=1.2:1.2:3:3,scale={W}:{H}:flags=lanczos,setsar=1,"
+        f"split=2[base][forblur];"
+        f"[forblur]crop={W}:{band_h}:0:{band_y},boxblur=24:2[blurred];"
+        f"[base][blurred]overlay=0:{band_y}[covered];"
+        f"[covered]{ass_f}[vout]"
     )
     run(["ffmpeg", "-v", "error", "-y",
          "-ss", f"{t0:.3f}", "-t", f"{t1-t0:.3f}", "-i", str(src),
-         "-vf", vf, "-r", str(FPS),
+         "-filter_complex", fc, "-map", "[vout]", "-map", "0:a",
+         "-r", str(FPS),
          "-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast",
          "-pix_fmt", "yuv420p", "-profile:v", "high",
          "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
@@ -696,7 +740,7 @@ def main(job_path, want=2):
             f"{total/60:.1f} мин, а куски не должны пересекаться и стоять "
             f"вплотную — на коротком ролике второго места не остаётся")
 
-    log("── оформление шапки: Oswald, белый, чёрная обводка")
+    log("── оформление шапки: Oswald, стекло (glow/edge/fill), субтитры белым")
 
     made, questions_used = [], []
     for n, (t0, t1, lo, hi, beat) in enumerate(windows, 1):
