@@ -277,22 +277,51 @@ def check_job_covers(job) -> list[str]:
     return problems
 
 
+# КАЧЕСТВЕННЫЙ РЕЖИМ ОБЛОЖЕК. Их всего две на ролик — это единственное
+# место конвейера, где экономить на качестве генерации незачем: обложка
+# решает, будет ли клик вообще, и стоит она две картинки, а не пятьдесят.
+#
+# quality="medium" — потолок для генерации, а НЕ середина шкалы: "auto"
+# разворачивается в "low", "high" для генерации не заявлен.
+#
+# ЭТИ ПАРАМЕТРЫ НЕ СВЕРЕНЫ С ЖИВЫМ API, и притворяться иначе нельзя:
+# ключа под рукой нет. Поэтому запрос идёт с ними, а на 400/422 (сервер не
+# знает поля) повторяется БЕЗ них — обложка попроще лучше упавшей упаковки.
+# Строка в лог при этом громкая: молчаливый откат к low — ровно тот класс
+# ошибки, ради которого на канале заведены проверки до первых денег.
+COVER_QUALITY = "medium"
+COVER_RESOLUTION = "2k"
+COVER_ASPECT = "16:9"
+
+
 def generate_art(prompt: str, dst: Path, key: str, model: str) -> bool:
-    """Один фон через xAI. Возвращает, получилось ли."""
-    try:
-        r = requests.post(f"{XAI}/images/generations", timeout=180,
-                          headers={"Authorization": f"Bearer {key}",
-                                   "Content-Type": "application/json"},
-                          json={"model": model, "prompt": prompt, "n": 1})
-        if r.status_code != 200:
-            log(f"  ! фон не вышел: {r.status_code} {r.text[:140]}")
+    """Один фон через xAI, в качественном режиме. Вернёт, получилось ли."""
+    body = {"model": model, "prompt": prompt, "n": 1,
+            "quality": COVER_QUALITY, "resolution": COVER_RESOLUTION,
+            "aspect_ratio": COVER_ASPECT}
+    for attempt in ("качественный", "без параметров качества"):
+        try:
+            r = requests.post(f"{XAI}/images/generations", timeout=240,
+                              headers={"Authorization": f"Bearer {key}",
+                                       "Content-Type": "application/json"},
+                              json=body)
+            if r.status_code in (400, 422) and attempt == "качественный":
+                log(f"  ! api не принял параметры качества "
+                    f"({r.status_code} {r.text[:120]}) — повторяю без них, "
+                    f"обложка выйдет в умолчании провайдера")
+                body = {"model": model, "prompt": prompt, "n": 1}
+                continue
+            if r.status_code != 200:
+                log(f"  ! фон не вышел: {r.status_code} {r.text[:140]}")
+                return False
+            url = r.json()["data"][0]["url"]
+            dst.write_bytes(requests.get(url, timeout=120).content)
+            log(f"  режим: {attempt}")
+            return True
+        except Exception as e:
+            log(f"  ! фон не вышел: {e}")
             return False
-        url = r.json()["data"][0]["url"]
-        dst.write_bytes(requests.get(url, timeout=120).content)
-        return True
-    except Exception as e:
-        log(f"  ! фон не вышел: {e}")
-        return False
+    return False
 
 
 def frame_from(video: Path, dst: Path, at: float) -> bool:

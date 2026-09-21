@@ -344,6 +344,15 @@ MAGNIFIC_AUTH_HEADER = "x-magnific-api-key"
 # — не больше 5% клипов ролика. 60-70% экранного времени остаются реальным
 # материалом, как было оговорено раньше; это не новая договорённость, а то
 # же самое число, просто теперь под него явно заведён потолок в коде.
+# ВЫКЛЮЧАТЕЛЬ MAGNIFIC НА ВСЕ ТРИ РОЛИ СРАЗУ. Канал решил не использовать
+# Magnific: генерация идёт только через xAI и только под то, чего не
+# сфотографировал никто. Одного числа тут мало — роли три
+# (сток по graphic_queries, генерация картинок, генерация видео), и
+# выключать их по отдельности значит рано или поздно забыть одну.
+# Ключ при этом может остаться в секретах: наличие ключа больше не
+# включает Magnific само по себе.
+MAGNIFIC_ENABLED = False
+
 MAGNIFIC_IMAGE_SHARE = 0.70
 MAGNIFIC_VIDEO_GEN_SHARE = 0.05
 MAGNIFIC_STOCK_DAILY_CAP = 15           # сток Magnific: видео+фото вместе, в сутки
@@ -401,6 +410,11 @@ def _magnific_poll(path: str, task_id: str, key, timeout=300):
         delay = min(delay * 2, 15.0)
     raise TimeoutError(f"magnific: задача {task_id} не завершилась за "
                        f"{timeout} с")
+
+
+def magnific_on(job) -> bool:
+    """Включён ли Magnific. Спецификация перекрывает умолчание канала."""
+    return bool(job.get("magnific_enabled", MAGNIFIC_ENABLED))
 
 
 def split_indexed(prompts, share):
@@ -1846,7 +1860,11 @@ def fetch_material(job, work: Path):
             log(f"  ! {len(missing)} тем не нашлось в обычных архивах, "
                 f"добираю уникальные векторы/иллюстрации через magnific "
                 f"(потолок {MAGNIFIC_STOCK_DAILY_CAP}/сутки)")
-            gather(missing, 2, [src_magnific], work / "archive", "arch")
+            if magnific_on(job):
+                gather(missing, 2, [src_magnific], work / "archive", "arch")
+            else:
+                log("  magnific выключен — эти темы закроет генерация xAI "
+                    "(image_prompts) либо они останутся незакрытыми")
 
     fill_missing_footage_via_magnific(job, work)
 
@@ -1874,6 +1892,9 @@ def fill_missing_footage_via_magnific(job, work: Path):
     """
     key = (os.environ.get("MAGNIFIC_API_KEY") or "").strip()
     if not key:
+        return
+    # Общий выключатель канала бьёт частный: видео не генерируется вовсе.
+    if not magnific_on(job):
         return
     if not job.get("magnific_video_gen_enabled", False):
         return
@@ -2141,7 +2162,9 @@ def main(job_path, stage="all"):
     # РАЗДЕЛЕНИЕ 70/30. Без ключа Magnific — всё как раньше, 100% на xAI:
     # это старый канал без подписки на Magnific, и поведение не должно
     # меняться только оттого, что функция теперь умеет больше.
-    if magnific_key:
+    if magnific_key and not magnific_on(job):
+        log("  magnific выключен (magnific_enabled) — вся генерация на xAI")
+    if magnific_key and magnific_on(job):
         share = float(job.get("magnific_image_share", MAGNIFIC_IMAGE_SHARE))
         models = list(job.get("magnific_image_models") or MAGNIFIC_IMAGE_MODELS)
         p_magnific, p_xai = split_indexed(prompts, share)

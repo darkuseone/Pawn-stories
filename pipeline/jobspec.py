@@ -138,7 +138,8 @@ KNOWN_TOP_LEVEL = {
     # надписи длинного ролика
     "burn_subs", "outro_cta",
     # генерация
-    "batch", "magnific_image_share", "magnific_image_models",
+    "batch", "magnific_enabled", "magnific_image_share",
+    "magnific_image_models",
     "magnific_video_share", "magnific_video_gen_enabled",
     "cover_text_by_model",
 }
