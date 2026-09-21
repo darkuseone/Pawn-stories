@@ -388,7 +388,32 @@ class StyleEngine:
         self.intro_photo_duration_range = (3.0, 7.0)
         self.intro_clip_share = 0.6
         self.intro_transition_duration_range = (0.35, 0.7)
-        self.body_clip_every_n_shots = max(2, int(round(v["clip_rhythm"])))
+        # Сколько одинаковых кадров подряд терпит вступление. Два — это
+        # старое умолчание, при котором ролик открывался чередованием
+        # видео/фото. На видеоканале (80% футажа) оно же и было потолком:
+        # после двух клипов третий кадр принудительно становился
+        # фотографией, и доля видео во вступлении не могла превысить 2/3
+        # физически, сколько бы ни стоял intro_clip_share.
+        self.intro_max_clip_run = 2
+        # ПОЛ НОЛЬ, а не два. Поле означает «через сколько кадров-картинок
+        # можно снова взять видео», и ноль значит «можно подряд». Пока
+        # здесь стоял max(2, …), два кадра-картинки между клипами были
+        # обязательны, то есть видео физически не могло занять больше
+        # трети тела ролика.
+        self.body_clip_every_n_shots = max(0, int(round(v["clip_rhythm"])))
+        # Множитель к clip_share доли из beats.py. Был зашит числом 2.0 в
+        # build.py. Кривая долей (крючок охотно берёт видео, развязка почти
+        # нет) остаётся формой, а этим числом её целиком приподнимают под
+        # формат канала — не ломая саму форму: развязка при любом множителе
+        # остаётся самой «фотографической» долей ролика.
+        self.body_clip_bias = 2.0
+        # Потолок длины кадра, который можно закрыть стоком. Умолчание —
+        # старое поведение; ворота build.clip_fits дополнительно требуют,
+        # чтобы в пуле был файл, закрывающий слот целиком.
+        self.clip_max_seconds = 15.0
+        # Заказанная доля экранного времени под видеофутаж. Ноль —
+        # старое поведение: долю определяет один жребий по долям.
+        self.footage_share = 0.0
 
         # ── эффекты ───────────────────────────────────────────────────
         self.effects_enabled = True
@@ -643,6 +668,9 @@ class StyleEngine:
             "intro_clip_s": list(self.intro_clip_duration_range),
             "intro_photo_s": list(self.intro_photo_duration_range),
             "body_clip_every": self.body_clip_every_n_shots,
+            "body_clip_bias": self.body_clip_bias,
+            "clip_max_s": self.clip_max_seconds,
+            "footage_share": self.footage_share,
             "base_duration": round(self.base_dur, 2),
             "deceleration": round(self.decel, 2),
             "arc": self.arc,

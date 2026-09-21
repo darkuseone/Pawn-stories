@@ -108,6 +108,12 @@ def load_job(path) -> dict:
 # это дешевле одного прогона, потраченного на молча проигнорированную
 # настройку.
 
+# ФОРМАТ КАНАЛА — 15-25 минут. Не догма для конкретного ролика (длину
+# иногда задаёт человек вместе с темой), а рамка, за которой стоит
+# переспросить: на 10 минутах жанр не успевает выдать путь к сумме, на 35
+# монтаж упирается в лимит раннера и в 2 ГБ Releases.
+CHANNEL_MINUTES = (15, 25)
+
 KNOWN_TOP_LEVEL = {
     # что делает ролик ЭТИМ роликом
     "id", "script_blocks", "topic", "youtube", "open_loop",
@@ -116,6 +122,12 @@ KNOWN_TOP_LEVEL = {
     "graphic_queries", "fill_prompts", "fill_limit", "reject",
     "trusted_sources", "top_up_budget", "material_overshoot",
     "photo_sources", "video_sources",
+    # материал, закреплённый ЗАРАНЕЕ прямыми ссылками (см. PINNED_KEYS)
+    "pinned_footage", "pinned_archive",
+    # расчёт хронометража: [минимум, максимум] минут, под который написан
+    # сценарий. Ничего не задаёт монтажу — это запись решения, чтобы на
+    # пересборке было видно, на какую длину рассчитывали.
+    "target_minutes",
     # голос
     "voice_settings", "voice_id",
     # отбраковка
@@ -141,7 +153,26 @@ VOICE_KEYS = {"stability", "similarity", "similarity_boost", "style",
 LIST_FIELDS = ("script_blocks", "image_prompts", "footage_queries",
                "archive_queries", "graphic_queries", "fill_prompts",
                "photo_sources", "video_sources", "trusted_sources",
-               "recent_luts", "recent_openings")
+               "recent_luts", "recent_openings",
+               "pinned_footage", "pinned_archive")
+
+# ЗАКРЕПЛЁННЫЙ МАТЕРИАЛ. Ключ записи: url обязателен, остальное — по
+# желанию.
+#
+#   url   — прямая ссылка на файл (CDN стока, файл архива). Не страница!
+#   q     — слова, под которые этот файл закреплён. Попадают в манифест, и
+#           build.kw_of() подбирает по ним кадр под то, что звучит в эту
+#           секунду. Без q файл ляжет под текст случайно — так что это
+#           «по желанию» только формально.
+#   src   — метка источника в имени файла и в манифесте. Умолчание
+#           "pinned", и оно же стоит в TRUSTED_SOURCES: файл, который
+#           человек (или чат) уже посмотрел глазами, не надо показывать
+#           зрению за деньги второй раз.
+#   kind  — "video" | "image". Умолчание берётся по папке: для
+#           pinned_footage это video, для pinned_archive — image.
+#   note  — свободная заметка, зачем этот файл. Никуда не читается, но
+#           через месяц объясняет выбор лучше, чем сам url.
+PINNED_KEYS = {"url", "q", "src", "kind", "note"}
 
 
 def check(job: dict) -> tuple[list[str], list[str]]:
@@ -204,6 +235,47 @@ def check(job: dict) -> tuple[list[str], list[str]]:
         if have and name not in have:
             stop.append(f"{where}: нет цветокора {name!r}. Есть: " +
                         ", ".join(have))
+
+    # ЗАКРЕПЛЁННЫЙ МАТЕРИАЛ. Ошибка здесь стоит дыры в ролике: файл не
+    # скачается, слот закроется чем попало, и увидно это будет на готовом
+    # монтаже. Поэтому опечатка в ключе — «стоп», а не заметка.
+    for name in ("pinned_footage", "pinned_archive"):
+        items = job.get(name)
+        if not isinstance(items, list):
+            continue                      # не список — уже поймано выше
+        for i, it in enumerate(items):
+            where = f"{name}[{i}]"
+            if not isinstance(it, dict):
+                stop.append(f"{where}: нужен объект {{\"url\": …}}, а не "
+                            f"{type(it).__name__}")
+                continue
+            bad = sorted(k for k in it if k not in PINNED_KEYS)
+            if bad:
+                stop.append(f"{where}: неизвестные ключи " + ", ".join(bad) +
+                            ". Допустимо: " + ", ".join(sorted(PINNED_KEYS)))
+            url = str(it.get("url") or "")
+            if not url.startswith(("http://", "https://")):
+                stop.append(f"{where}: url {url!r} — нужна прямая ссылка на "
+                            f"файл по http(s)")
+            kind = it.get("kind")
+            if kind is not None and kind not in ("video", "image"):
+                stop.append(f"{where}: kind={kind!r} — только \"video\" "
+                            f"или \"image\"")
+            if not str(it.get("q") or "").strip():
+                note.append(f"{where}: нет q — build.kw_of() не сможет "
+                            f"подобрать этот файл по смыслу, и он ляжет под "
+                            f"текст случайно")
+
+    tm = job.get("target_minutes")
+    if tm is not None:
+        ok = (isinstance(tm, (list, tuple)) and len(tm) == 2
+              and all(isinstance(v, (int, float)) for v in tm)
+              and tm[0] <= tm[1])
+        if not ok:
+            stop.append("target_minutes: нужен [минимум, максимум] минут")
+        elif not (CHANNEL_MINUTES[0] <= tm[0] and tm[1] <= CHANNEL_MINUTES[1]):
+            note.append(f"target_minutes={list(tm)} вне формата канала "
+                        f"{list(CHANNEL_MINUTES)} минут")
 
     loop = job.get("open_loop") or {}
     per_block = loop.get("questions")

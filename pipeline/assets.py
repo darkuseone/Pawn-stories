@@ -1703,6 +1703,87 @@ def clips_needed(job, total_seconds: float) -> int:
 
 # ────────────────────────── ГЛАВНОЕ ──────────────────────────
 
+PINNED_SRC = "pinned"
+
+
+def fetch_pinned(job, work: Path):
+    """
+    Качает материал, ЗАКРЕПЛЁННЫЙ ЗАРАНЕЕ прямыми ссылками.
+
+    Смысл в разделении ролей: материал подбирает и СМОТРИТ ГЛАЗАМИ чат,
+    до пуша, а Actions только качает по готовому списку. Словесный запрос
+    отдаёт то, что есть у источника, а не то, что нужно ролику — на ff-ep09
+    ролик про Sega ушёл под мушкетным пистолетом из коллекции Met, и
+    урожайность при этом показывала 100%: файлы скачались, отбраковка их
+    пропустила, а «это не про то» не умеет сказать ни одна проверка.
+
+    Поэтому это отдельный проход ДО gather(), а не источник в ALL_SOURCES:
+    источник — это функция поиска по словам, а здесь поиска нет вовсе.
+
+    Файлы кладутся в те же папки, с той же нумерацией и в тот же манифест,
+    что и скачанные поиском, — дальше по конвейеру они неотличимы. Метка
+    src (умолчание "pinned") стоит в vet.TRUSTED_SOURCES: кадр, который
+    уже посмотрели глазами, не надо показывать зрению за деньги второй раз.
+    """
+    plan = (("pinned_footage", work / "footage", "clip", "video"),
+            ("pinned_archive", work / "archive", "arch", "image"))
+    for field, out, kind, default_kind in plan:
+        items = job.get(field) or []
+        if not items:
+            continue
+        log(f"── закреплённый материал: {field} ({len(items)} шт)")
+        out.mkdir(parents=True, exist_ok=True)
+
+        man = out / "_manifest.json"
+        old = []
+        if man.exists():
+            try:
+                old = json.loads(man.read_text())
+            except json.JSONDecodeError:
+                old = []
+        seen = {o.get("url") for o in old if o.get("url")}
+        # Номер берём с диска, как gather(): человек мог отметить номера на
+        # листе отбора, и переписать clip_000 другим содержимым нельзя.
+        have = [int(p.name.split("_")[1]) for p in out.glob(f"{kind}_*")
+                if p.name.split("_")[1].isdigit()]
+        n = max(have) + 1 if have else 0
+
+        got, missed = [], []
+        for it in items:
+            url = it["url"]
+            if url in seen:
+                continue
+            seen.add(url)
+            src = it.get("src") or PINNED_SRC
+            file_kind = it.get("kind") or default_kind
+            ext = ".mp4" if file_kind == "video" else ".jpg"
+            dst = out / f"{kind}_{n:03d}_{src}{ext}"
+            if not fetch(url, dst):
+                missed.append(url)
+                continue
+            if file_kind == "video":
+                trim_long_clip(dst)
+            got.append({"file": str(dst), "q": it.get("q") or "",
+                        "url": url, "src": src, "kind": file_kind})
+            log(f"  {kind} {n:03d}: {src}  «{it.get('q') or '—'}»")
+            n += 1
+
+        if got:
+            man.write_text(json.dumps(old + got, indent=1))
+        # ПРО ДЫРКУ ГОВОРИМ ГРОМКО, но прогон не роняем: закреплённых ссылок
+        # в ролике десятки, и одна мёртвая CDN-ссылка не повод потерять
+        # уже оплаченную озвучку. Её закроет запасной пул словесных
+        # запросов — он для этого и оставлен.
+        if missed:
+            log(f"  ! НЕ СКАЧАЛОСЬ {len(missed)} из {len(items)} "
+                f"закреплённых — ссылка умерла или отдала не файл:")
+            for u in missed:
+                log(f"    {u}")
+            log("  эти слоты закроет запасной пул из "
+                f"{'footage_queries' if kind == 'clip' else 'archive_queries'}")
+        log(f"  {field}: закреплено {len(got)}, не вышло {len(missed)}")
+
+
 def fetch_material(job, work: Path):
     """
     Только футаж и архивные фото. Ни озвучки, ни генерации — денег не тратит.
@@ -1711,6 +1792,10 @@ def fetch_material(job, work: Path):
     правятся после того, как посмотришь, что по ним нашлось, и гонять ради
     этого заново озвучку за деньги незачем.
     """
+    # Закреплённое — ПЕРВЫМ. Оно основной материал ролика; словесные
+    # запросы ниже это добор сверх него, а не наоборот.
+    fetch_pinned(job, work)
+
     vids = sources_from(job, "video_sources", VIDEO_SOURCES)
     phot = sources_from(job, "photo_sources", PHOTO_SOURCES)
     # ЗАПАС 40%. Робот отбраковывает материал сам (vet.py), и часть подборки

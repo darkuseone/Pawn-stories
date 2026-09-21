@@ -62,6 +62,21 @@ INTRO_MOVES = ["push_in", "pan_right", "pan_left",
 # Сток длиннее этого в кадр не ставим: клип приходит на 10-20 секунд, и на
 # кадре в 20+ он уходит на второй круг петли — видно как рывок назад.
 # Долгий кадр всегда достаётся фотографии.
+# Потолок длины кадра, который вообще можно закрыть стоком. Умолчание
+# держит старое поведение; канал поднимает его до 25 с — до того же
+# потолка, до которого assets.trim_long_clip режет скачанный файл.
+#
+# Одной константой это не решается, и вот почему. Слотов длиннее 15 с в
+# получасовом ролике набирается на 38% экранного времени (замер на
+# _mix-probe: 20 кадров, 391 с) — то есть при потолке 15 доля видео
+# физически не может превысить примерно 60%, сколько бы ни стояло в
+# body_clip_bias. Но поднять потолок и только: сток приходит по 12-20
+# секунд, и 26-секундный слот из 12-секундного файла означает замерший
+# кадр или склейку внутри одного движения камеры — ровно то, от чего
+# спасает ClipCutter. Поэтому ворота смотрят на РЕАЛЬНУЮ длину файлов в
+# пуле (clip_fits ниже), а не только на константу: длинный слот уходит
+# под видео, когда настоящий материал его закрывает, и остаётся
+# картинкой, когда нет.
 CLIP_MAX_SECONDS = 15.0
 
 # Потолок повторов ОДНОГО стокового клипа. На ff-ep03 отбраковка (vet.py)
@@ -353,8 +368,16 @@ class MaterialMix:
     стилевой жребий, а требование к ролику, и она не должна плавать от id.
     """
 
-    def __init__(self, target: float, gen: bool, arch: bool, clips: bool):
+    def __init__(self, target: float, gen: bool, arch: bool, clips: bool,
+                 clip_target: float = 0.0):
         self.target = max(0.0, min(1.0, float(target)))
+        # Заказанная доля ВИДЕО, тем же счётом по времени, что и генерация.
+        # Монеткой по долям (beat_wants_clip) она не держится: жребий даёт
+        # ту долю, которая выпала, а не ту, которая заказана, и на замере
+        # _mix-long он останавливался на 55% при заказанных 80%. Здесь
+        # случайности нет намеренно — доля материала это требование к
+        # ролику, а не стилевой жребий, и плавать от id она не должна.
+        self.clip_target = max(0.0, min(1.0, float(clip_target)))
         self.have = {"gen": bool(gen), "arch": bool(arch), "clip": bool(clips)}
         self.sec = {"gen": 0.0, "arch": 0.0, "clip": 0.0}
         self.shots = {"gen": 0, "arch": 0, "clip": 0}
@@ -376,6 +399,22 @@ class MaterialMix:
 
         total = sum(self.sec.values())
         behind = total <= 0 or (self.sec["gen"] / total) < self.target
+
+        # ЧТО ОТСТАЛО СИЛЬНЕЕ, то и берём. Долей теперь две — генерация и
+        # видео, — и они соревнуются за один и тот же слот. Сравнивать
+        # надо отставание ОТНОСИТЕЛЬНО заказанного, а не абсолютную
+        # нехватку секунд: 5% недобора при заказе 15% — это треть доли,
+        # при заказе 80% — одна шестнадцатая.
+        clip_lag = 0.0
+        if self.clip_target > 0 and total > 0:
+            clip_lag = ((self.clip_target - self.sec["clip"] / total)
+                        / self.clip_target)
+        gen_lag = 0.0
+        if self.target > 0 and total > 0:
+            gen_lag = (self.target - self.sec["gen"] / total) / self.target
+
+        if "clip" in can and clip_lag > 0 and clip_lag >= gen_lag:
+            return "clip"
 
         # Генерация — только когда она отстаёт от заказанной доли.
         # На пустом счёте (total == 0) behind истинно, но первым кадром
@@ -617,6 +656,20 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total, prior,
                           cap=MAX_IMAGE_REPEATS)
     clip_pick = ShotPicker([(p, "clip", kw_of(p)) for p in clips], total, prior)
+    # Заводится здесь, а не перед вступлением: на него смотрит clip_fits.
+    cutter = ClipCutter()
+
+    def clip_fits(dur: float) -> bool:
+        """Есть ли в пуле хоть один файл, который закрывает слот целиком.
+
+        Длины читает ffprobe через кэш ClipCutter, так что на ролик это
+        один проход по папке футажа, а не вызов на кадр.
+        """
+        if dur > st.clip_max_seconds:
+            return False
+        if dur <= 0:
+            return True
+        return any(cutter.duration(c) >= dur for c in clips)
 
     # ── РАЗБОР СЦЕНАРИЯ НА ДОЛИ ──────────────────────────────────────
     # Считается по тайм-кодам и по тексту, без единого запроса к модели:
@@ -692,7 +745,7 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         return False
 
     mix = MaterialMix(st.generated_share, bool(images), bool(archive),
-                      bool(clips))
+                      bool(clips), clip_target=st.footage_share)
     if not archive:
         log("  ! подлинных фото нет — под предметы пойдёт генерация; "
             "добери архив этапом material")
@@ -732,7 +785,6 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
 
     since_clip = 0       # сколько кадров-картинок подряд уже прошло
     next_gap = st.body_clip_every_n_shots
-    cutter = ClipCutter()
 
     # --- вступление ---
     t = marks[0]["start"] if marks else 0.0
@@ -745,7 +797,12 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     while t < intro_end:
         # чередуем видео и фото, но не даём трём одинаковым идти подряд
         want_clip = st.rng.random() < st.intro_clip_share and clip_available()
-        if run_len >= 2:
+        # Предел однородного ряда у видео свой (intro_max_clip_run), у
+        # фотографий по-прежнему два: на видеоканале длинная очередь
+        # клипов — это и есть заказанное вступление, а три фотографии
+        # подряд в первые минуты по-прежнему провал темпа.
+        cap = st.intro_max_clip_run if run_kind == "clip" else 2
+        if run_len >= cap:
             want_clip = run_kind != "clip" and clip_available()
         # hard_in открывает стоковым видео: ролик стартует движением, а не
         # фотографией. Если стока нет, правило молча уступает — вступление
@@ -909,11 +966,12 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         # не идёт: там на экране должен быть конкретный предмет, а не
         # абстрактные руки в темноте из чужого стока. Под нагнетание,
         # наоборот, идёт охотно — там нужно движение.
-        beat_wants_clip = (st.rng.random() < pace.clip_share(beat) * 2.0
+        beat_wants_clip = (st.rng.random() < pace.clip_share(beat)
+                           * st.body_clip_bias
                            if beat is not None else True)
         clip_ok = (not is_anchor and since_clip >= next_gap
                    and beat_wants_clip
-                   and dur <= CLIP_MAX_SECONDS and clip_available())
+                   and clip_fits(dur) and clip_available())
         got = mix.pick((["clip"] if clip_ok else []) +
                       (["gen"] if gen_available() else []) +
                       (["arch"] if arch_available() else []))
@@ -931,7 +989,17 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
                                  ("transition", "transition_dur", "effect")}))
             since_clip = 0
             n = st.body_clip_every_n_shots
-            next_gap = max(1, n + st.rng.choice([-1, 0, 0, 1]))
+            # ДРОЖАНИЕ ШАГА ВЫКЛЮЧЕНО НА НУЛЕ, и это не мелочь. Шаг гуляет
+            # на единицу в обе стороны, чтобы ровный ритм «через три на
+            # четвёртый» не читался как машинный. Но на нуле «-1» упирается
+            # в пол, дрожание становится односторонним и само навязывает
+            # кадр-картинку примерно каждый четвёртый раз — то есть
+            # ограничивает долю видео там, где её просили не ограничивать
+            # вовсе. Замер: 72% вместо заказанных 80%. На нуле ритм и так
+            # неровный — его рвут и доли (beat_wants_clip), и нехватка
+            # достаточно длинного файла (clip_fits).
+            next_gap = (0 if n <= 0
+                        else max(1, n + st.rng.choice([-1, 0, 0, 1])))
         else:
             since_clip += 1
             shots.append(put_image(
@@ -1224,8 +1292,14 @@ OVERRIDABLE = {
     "intro_clip_duration_range": "intro_clip_duration_range",
     "intro_photo_duration_range": "intro_photo_duration_range",
     "intro_clip_share":          "intro_clip_share",
+    "intro_max_clip_run":        "intro_max_clip_run",
     "intro_transition_duration_range": "intro_transition_duration_range",
     "body_clip_every_n_shots":   "body_clip_every_n_shots",
+    "body_clip_bias":            "body_clip_bias",
+    # Заказанная доля экранного времени под видеофутаж. Держится счётом
+    # по времени (MaterialMix), а не жребием по долям.
+    "footage_share":             "footage_share",
+    "clip_max_seconds":          "clip_max_seconds",
     "effects_enabled":           "effects_enabled",
     "effects":                   "effects",
     "effect_probability":        "effect_probability",
