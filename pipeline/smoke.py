@@ -407,6 +407,7 @@ def main(job_path):
 
     print("── комплект для выкладки")
     import youtube as yt
+    import shorts as shorts_mod
     fake_chaps = [(0.0, "one"), (300.0, "two"), (600.0, "three")]
     card = yt.publish_card(job, fake_chaps, 1500.0, work.parent,
                            work.parent / "out", "a, b")
@@ -429,8 +430,10 @@ def main(job_path):
     if len(tags5) < 5:
         print(f"   ! хештегов {len(tags5)} из 5 — добери youtube.hashtags")
     st_titles = yt.short_titles(job, work.parent / "out", yt.load_publish_rules())
-    if len(st_titles) != 2 or not all(st_titles):
-        raise SystemExit(f"названий шортсов {st_titles} — нужно два непустых")
+    want = shorts_mod.SHORT_COUNT
+    if len(st_titles) != want or not all(st_titles):
+        raise SystemExit(f"названий шортсов {len(st_titles)}, нужно {want} "
+                         f"непустых: {st_titles}")
     if any(len(t) > 100 for t in st_titles):
         raise SystemExit("название шортса длиннее 100 символов — YouTube обрежет")
     # Незакрытый плейсхолдер — это шаблон, уехавший к человеку сырым.
