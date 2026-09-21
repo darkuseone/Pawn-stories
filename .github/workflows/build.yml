@@ -90,6 +90,37 @@ jobs:
               if [ -n "$ADDED" ]; then
                 # Несколько новых файлов за один push — берём первый.
                 JOB=$(basename "$(echo "$ADDED" | head -1)" .json)
+                # МЕРЖ ВЕТКИ СО СВЕЖЕЙ СПЕЦИФИКАЦИЕЙ — ЭТО ВТОРОЙ ПЛАТНЫЙ
+                # ПРОГОН ТОГО ЖЕ РОЛИКА, и это уже случилось: пуш ветки с
+                # jobs/ms-ep01.json запустил сборку, мерж той же ветки в
+                # main запустил ВТОРУЮ, на тот же ролик и с той же
+                # озвучкой ElevenLabs. Поймали руками, погасили руками.
+                #
+                # Признак точный, а не эвристика: у мерж-коммита есть
+                # второй родитель, и если спецификация УЖЕ лежала в нём,
+                # значит она пришла из ветки — а ветка свою сборку с этим
+                # файлом получила при пуше. Новый файл, созданный прямо в
+                # мерж-коммите, во втором родителе не лежит и собирается
+                # как обычно.
+                P2=$(git rev-parse -q --verify "${{ github.sha }}^2" 2>/dev/null || true)
+                if [ -n "$P2" ] && git cat-file -e "$P2:jobs/$JOB.json" 2>/dev/null; then
+                  echo "jobs/$JOB.json пришёл мержем ветки — сборка уже"
+                  echo "запускалась пушем в саму ветку, второй платный"
+                  echo "прогон не начинаю."
+                  echo "Если тот прогон не доехал (упал, отменён) — запусти"
+                  echo "вручную: Actions -> Build video -> Run workflow,"
+                  echo "job=$JOB, stage=auto."
+                  echo "skip=true"        >> $GITHUB_OUTPUT
+                  echo "job="             >> $GITHUB_OUTPUT
+                  echo "stage=auto"       >> $GITHUB_OUTPUT
+                  echo "id="              >> $GITHUB_OUTPUT
+                  echo "do_assets=false"  >> $GITHUB_OUTPUT
+                  echo "do_build=false"   >> $GITHUB_OUTPUT
+                  echo "do_pack=false"    >> $GITHUB_OUTPUT
+                  echo "do_shorts=false"  >> $GITHUB_OUTPUT
+                  echo "from_release=false" >> $GITHUB_OUTPUT
+                  exit 0
+                fi
                 echo "Автозапуск по новому файлу: jobs/$JOB.json"
               fi
             fi
