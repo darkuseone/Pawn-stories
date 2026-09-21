@@ -1117,9 +1117,17 @@ def main(job_path, want=SHORT_COUNT):
         for p, w, q in zip(made, windows, questions_used)],
         ensure_ascii=False, indent=1),
         encoding="utf-8")
-    log(f"── готово: {len(made)} шортса")
+    log(f"── готово: {len(made)} из {want} заказанных")
     return made
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], want=int(sys.argv[2]) if len(sys.argv) > 2 else 2)
+    # ЧЕТВЁРТОЕ МЕСТО, ГДЕ ЖИЛА ДВОЙКА, и именно оно уехало в боевой прогон.
+    # Сигнатуры pick_windows и main уже брали SHORT_COUNT, срез в
+    # youtube.short_titles и проверка в smoke тоже — а точка входа
+    # подставляла 2 ЯВНЫМ аргументом и перебивала умолчание. Хуже того,
+    # правка workflow (перестал передавать число) эту ветку и включила:
+    # пока число передавалось, оно было верным. Релиз ms-ep01 вышел с
+    # двумя шортсами при заказанных четырёх.
+    main(sys.argv[1],
+         want=int(sys.argv[2]) if len(sys.argv) > 2 else SHORT_COUNT)
