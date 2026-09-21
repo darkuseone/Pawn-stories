@@ -1427,7 +1427,7 @@ DENY_HINTS = ("invalid_api_key", "invalid api key", "incorrect api key",
               "invalid authentication", "no api key", "api key not found")
 
 
-def check_keys():
+def check_keys(needs_xai=True):
     """
     Дёргает по одному дешёвому запросу на каждый ключ ДО того, как начнётся
     озвучка и генерация. Иначе неверный ключ вылезает на первом же обращении,
@@ -1498,8 +1498,22 @@ def check_keys():
     else:
         log("  . ELEVENLABS_VOICE_ID: не проверен, сначала нужен рабочий ключ")
 
-    probe("XAI_API_KEY", "https://api.x.ai/v1/models",
-          {"Authorization": f"Bearer {xai}"})
+    # xAI НУЖЕН ТОЛЬКО ПОД ГЕНЕРАЦИЮ И ЗРЕНИЕ, и оба теперь необязательны.
+    # Ролик, у которого весь материал закреплён ссылками и уже просмотрен
+    # глазами в чате, не обращается к xAI ни разу — а раньше отсутствие
+    # ключа роняло прогон на проверке ключей, то есть заставляло держать
+    # живой платный ключ ради того, чем не пользуешься. Пустой баланс
+    # выглядит снаружи так же: ключ есть, а вызовы падают.
+    if xai:
+        probe("XAI_API_KEY", "https://api.x.ai/v1/models",
+              {"Authorization": f"Bearer {xai}"})
+    elif needs_xai:
+        bad.append("XAI_API_KEY: ключа нет, а ролику он нужен — в "
+                   "спецификации есть image_prompts либо включено "
+                   "зрение (vet_vision)")
+    else:
+        log("  . XAI_API_KEY: ключа нет, и он не нужен — image_prompts "
+            "пуст, зрение выключено, материал закреплён ссылками")
     # ПРОВЕРЯЕМ ИМЕННО ВИДЕО. Раньше здесь стоял /v1/search — поиск по
     # фотографиям, которым мы не пользуемся вовсе: Pexels берётся только под
     # футаж. Ключ отвечал на фото 200 «принят», а на /videos/search — 401
@@ -2148,13 +2162,27 @@ def main(job_path, stage="all"):
         return
 
     log("── проверка ключей")
-    check_keys()
+    # Нужен ли этому ролику xAI вообще: генерация — только если есть
+    # промпты, зрение — только если не выключено спецификацией.
+    check_keys(needs_xai=bool(job.get("image_prompts"))
+               or bool(job.get("vet_vision", True)))
 
     log("── озвучка")
     voice, marks, total = build_voice(job, work)
 
     log("── изображения")
-    key = os.environ["XAI_API_KEY"].strip()
+    key = (os.environ.get("XAI_API_KEY") or "").strip()
+    # ПУСТОЙ СПИСОК ПРОМПТОВ — ШТАТНЫЙ РЕЖИМ, а не ошибка. Материал ролика
+    # закреплён ссылками и просмотрен глазами до пуша; генерация остаётся
+    # только под то, чего не снял никто, и её может не быть вовсе.
+    if not job.get("image_prompts"):
+        log("  image_prompts пуст — генерации нет, ролик идёт на реальном "
+            "материале")
+    elif not key:
+        raise SystemExit(
+            "image_prompts не пуст, а XAI_API_KEY нет: сгенерировать "
+            "нечем.\nЛибо задай ключ, либо очисти image_prompts и закрой "
+            "эти кадры закреплённым материалом.")
     magnific_key = (os.environ.get("MAGNIFIC_API_KEY") or "").strip()
     model = job.get("image_model", "grok-imagine-image")
     prompts = job["image_prompts"]

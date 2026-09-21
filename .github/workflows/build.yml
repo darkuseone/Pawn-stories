@@ -440,7 +440,7 @@ jobs:
       - name: Этап 4 — два шортса
         if: steps.pick.outputs.do_shorts == 'true'
         continue-on-error: true
-        run: python pipeline/shorts.py jobs/${{ steps.pick.outputs.job }}.json 2
+        run: python pipeline/shorts.py jobs/${{ steps.pick.outputs.job }}.json
 
       # Комплект для выкладки целиком: заголовок, описание с тайм-кодами,
       # источники, пять хештегов, теги, названия шортсов, промпт обложки,

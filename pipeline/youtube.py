@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from jobspec import load_job
 import type as type_mod
+import shorts as shorts_mod
 
 W_THUMB, H_THUMB = 1280, 720
 FONT_BOLD = str(type_mod.font_path())
@@ -301,7 +302,7 @@ def sources_block(job, work: Path, rules) -> str:
 
 def short_titles(job, out: Path, rules) -> list:
     """
-    Названия двух шортсов.
+    Названия шортсов — столько, сколько их реально нарезано.
 
     Спецификация выигрывает (youtube.short_titles). Иначе берётся вопрос
     ТОГО блока, из которого шортс реально нарезан: shorts.py пишет это в
@@ -310,8 +311,9 @@ def short_titles(job, out: Path, rules) -> list:
     """
     y = job.get("youtube") or {}
     own = as_list(y.get("short_titles"), "short_titles") if y.get("short_titles") else []
-    if len(own) >= 2:
-        return [str(t).strip() for t in own[:2]]
+    want = shorts_mod.SHORT_COUNT
+    if len(own) >= want:
+        return [str(t).strip() for t in own[:want]]
 
     loop = job.get("open_loop") or {}
     per_block = {str(k): str(v).strip()
@@ -333,11 +335,14 @@ def short_titles(job, out: Path, rules) -> list:
 
     tpl = rules.get("short_title") or "{QUESTION} #Shorts"
     alt = rules.get("short_title_alt") or "{SUM} #Shorts"
-    titles = [_fill(tpl, job, {"{QUESTION}": q}) for q in questions[:2]]
-    while len(titles) < 2:
+    titles = [_fill(tpl, job, {"{QUESTION}": q}) for q in questions[:want]]
+    # Добивать НАДО, и запасным шаблоном: без названия шортс уедет к
+    # человеку безымянным, а он их выкладывает руками по одному.
+    while len(titles) < want:
         titles.append(_fill(alt, job))
     # YouTube режет заголовок на 100 символах.
-    return [t if len(t) <= 100 else t[:97].rstrip() + "…" for t in titles[:2]]
+    return [t if len(t) <= 100 else t[:97].rstrip() + "…"
+            for t in titles[:want]]
 
 
 def publish_card(job, chaps, total, work: Path, out: Path, tags: str) -> str:
