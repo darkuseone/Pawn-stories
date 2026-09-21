@@ -422,7 +422,15 @@ class MaterialMix:
         # настоящую находку рисунком — ровно то, чего мы избегаем.
         if "gen" in can and behind and total > 0:
             return "gen"
-        real = [k for k in ("clip", "arch") if k in can]
+
+        # ПОРЯДОК ХВОСТА ЗАВИСИТ ОТ ТОГО, ПЕРЕБРАЛО ЛИ ВИДЕО. Здесь стояло
+        # безусловное («clip», «arch»), и на этом потолок доли видео не
+        # держался вовсе: доля считалась, отставание считалось, а когда
+        # видео УЖЕ перебрало заказанное, хвост всё равно отдавал слот ему.
+        # Замер: 74% при заказанных 35%. Перебрало — вперёд идёт архив.
+        order = (("arch", "clip") if self.clip_target > 0 and clip_lag <= 0
+                 else ("clip", "arch"))
+        real = [k for k in order if k in can]
         return real[0] if real else can[0]
 
     def charge(self, kind: str, seconds: float):
