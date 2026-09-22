@@ -458,6 +458,27 @@ def main(job_path):
     build.check_luts(st)
     shots = build.plan_shots(marks, st, assets := work, total,
                              job.get("reject"), job)
+    # ПРИВЯЗКИ К ФРАЗАМ. Файл, закреплённый под цитату at, обязан стоять
+    # в кадре, который накрывает эту фразу. Проверяется по готовому плану,
+    # а не по счётчику внутри ShotPicker: регресс раскладки (вид кадра
+    # отдан мимо привязки) счётчик бы не увидел.
+    binds, missed = build.pinned_bindings(work, job, marks)
+    if missed:
+        raise SystemExit(f"цитаты at не нашлись в тайм-кодах: {missed}")
+    lost = []
+    for (prefix, num), windows in binds.items():
+        for a, b in windows:
+            ok = any(sh.get("file") is not None
+                     and Path(sh["file"]).stem.split("_")[:2] == [prefix, f"{num:03d}"]
+                     and sh["start"] < b and sh["start"] + sh["duration"] > a
+                     for sh in shots)
+            if not ok:
+                lost.append(f"{prefix}_{num:03d} @ {a:.1f}-{b:.1f} с")
+    if lost:
+        print("   ! не под своей фразой: " + ", ".join(lost))
+    if binds:
+        print(f"   привязки к фразам: {sum(len(w) for w in binds.values()) - len(lost)}"
+              f" из {sum(len(w) for w in binds.values())} на месте")
     bounds = build.chapter_boundaries(job, getattr(st, "beats", []), total)
     if bounds:
         shots, total = build.insert_chapter_cards(shots, bounds, total)

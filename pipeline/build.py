@@ -231,9 +231,17 @@ class ShotPicker:
     # а материала на канале конечное количество.
     PRIOR_WEIGHT = 0.5
 
-    def __init__(self, pool, total: float, prior=None, cap: int = None):
+    def __init__(self, pool, total: float, prior=None, cap: int = None,
+                 bound=None):
         # pool: [(path, tag, keywords), ...]
         self.pool = pool
+        # ПРИВЯЗКА К ФРАЗЕ: {индекс файла: [(начало, конец), ...]} — окна
+        # предложений, под которые файл выбран глазами (поле at у
+        # закреплённого материала, см. pinned_bindings). Под своей фразой
+        # такой файл побеждает всё; ДО неё — уступает всем, чтобы не
+        # сгореть раньше времени под чужим текстом.
+        self.bound = bound or {}
+        self.bound_shown = set()
         self.total = max(total, 0.001)
         self.used = {}
         self.last = None
@@ -266,16 +274,28 @@ class ShotPicker:
             if n:
                 self.prior[j] = n * self.PRIOR_WEIGHT
 
-    def take(self, t: float, text: str = ""):
+    def bound_here(self, t: float, until: float):
+        """Индексы файлов, чья фраза звучит на отрезке [t, until)."""
+        return [j for j, ws in self.bound.items()
+                if any(a < until and b > t for a, b in ws)]
+
+    def take(self, t: float, text: str = "", until: float = None):
         n = len(self.pool)
         if not n:
             raise SystemExit("пустой пул материала")
         want = words_of(text)
         k = min(n - 1, max(0, int(t / self.total * n)))
         self.calls += 1
+        until = t + 0.01 if until is None else until
+        here = set(self.bound_here(t, until))
 
         def score(j):
             path, _tag, kw = self.pool[j]
+            ws = self.bound.get(j)
+            hit = 1 if j in here and j not in self.bound_shown else 0
+            # бережём до своей фразы: окно ещё впереди — уступаем
+            reserved = 1 if (ws and not hit
+                             and any(a >= t for a, _b in ws)) else 0
             # показы в этом ролике плюс половина показов в прошлых
             used = self.used.get(j, 0) + self.prior.get(j, 0.0)
             # СМЫСЛОВОЕ СОВПАДЕНИЕ ГАСНЕТ ОТ ПОКАЗОВ.
@@ -306,9 +326,14 @@ class ShotPicker:
             # порядок важен: сначала потолок, потом не повторяться, потом
             # смысл (с учётом износа), потом реже показанное, потом ближе
             # по таймлайну
-            return (over_cap, same, -overlap, used, abs(j - k), j)
+            # Привязанный файл под СВОЕЙ фразой идёт мимо потолка повторов:
+            # это решение, принятое глазами, а не удача совпадения слов.
+            return (0 if hit else over_cap, same, -hit, reserved,
+                    -overlap, used, abs(j - k), j)
 
         best = min(range(n), key=score)
+        if best in here:
+            self.bound_shown.add(best)
         if len(want & self.pool[best][2]):
             self.hits += 1
         self.last_repeat = self.used.get(best, 0)
@@ -446,6 +471,54 @@ class MaterialMix:
 
 
 # ───────────────────────── ПЛАН КАДРОВ ─────────────────────────
+
+def pinned_bindings(assets: Path, job, marks):
+    """
+    Окна времени, под которые закреплённые файлы выбраны глазами.
+
+    Источник истины — СПЕЦИФИКАЦИЯ (поле at у записи pinned_*), а не
+    манифест: так правка at работает на пересборке без повторного
+    скачивания. Файл находится по url через манифест папки.
+
+    Возвращает ({(префикс, номер): [(начало, конец), ...]}, промахи) —
+    промах это цитата, которой нет среди предложений marks.
+    """
+    from jobspec import at_list, find_at
+    want = {}
+    for field in ("pinned_footage", "pinned_archive"):
+        for it in (job or {}).get(field) or []:
+            if isinstance(it, dict) and it.get("url") and at_list(it):
+                want[it["url"]] = at_list(it)
+    if not want:
+        return {}, []
+    texts = [m.get("text", "") for m in marks]
+    out, missed = {}, []
+    for folder in ("footage", "archive"):
+        man = assets / folder / "_manifest.json"
+        if not man.exists():
+            continue
+        try:
+            rows = json.loads(man.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        for row in rows:
+            quotes = want.get(row.get("url"))
+            if not quotes:
+                continue
+            name = Path(row.get("file", "")).name
+            try:
+                key = (name.split("_")[0], int(name.split("_")[1]))
+            except (IndexError, ValueError):
+                continue
+            for q in quotes:
+                idx = find_at(texts, q)
+                if idx is None:
+                    missed.append(q)
+                    continue
+                out.setdefault(key, []).append(
+                    (marks[idx[0]]["start"], marks[idx[-1]]["end"]))
+    return out, missed
+
 
 def keywords_for(assets: Path, job):
     """
@@ -661,11 +734,33 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     if prior:
         log(f"  память канала: {len(prior)} файлов уже шли в эфир")
 
+    # ПРИВЯЗКИ К ФРАЗАМ — материал, выбранный глазами под конкретное
+    # место сценария (поле at). Индексы — по позиции файла в своём пуле.
+    binds, bind_missed = pinned_bindings(assets, job, marks)
+
+    def bound_of(paths):
+        out = {}
+        for j, p in enumerate(paths):
+            try:
+                key = (p.stem.split("_")[0], int(p.stem.split("_")[1]))
+            except (IndexError, ValueError):
+                continue
+            if key in binds:
+                out[j] = binds[key]
+        return out
+
     gen_pick = ShotPicker([(p, "gen", kw_of(p)) for p in images], total, prior,
                          cap=MAX_IMAGE_REPEATS)
     arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total, prior,
-                          cap=MAX_IMAGE_REPEATS)
-    clip_pick = ShotPicker([(p, "clip", kw_of(p)) for p in clips], total, prior)
+                          cap=MAX_IMAGE_REPEATS, bound=bound_of(archive))
+    clip_pick = ShotPicker([(p, "clip", kw_of(p)) for p in clips], total, prior,
+                          bound=bound_of(clips))
+    n_bound = len(clip_pick.bound) + len(arch_pick.bound)
+    if n_bound or bind_missed:
+        log(f"  привязки к фразам: {n_bound} файлов "
+            f"(видео {len(clip_pick.bound)}, фото {len(arch_pick.bound)})")
+    for q in bind_missed:
+        log(f"  ! цитаты «{q[:60]}» нет в тайм-кодах — привязка не сработает")
     # Заводится здесь, а не перед вступлением: на него смотрит clip_fits.
     cutter = ClipCutter()
 
@@ -762,12 +857,34 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     if not clips:
         log("  ! стокового видео нет — вступление будет из одних фотографий")
 
-    def put_image(kind, t_pos, said="", **extra):
+    def put_image(kind, t_pos, said="", until=None, **extra):
         """Ставит кадр-картинку нужной семьи и записывает его в счёт."""
-        src, tag = (gen_pick if kind == "gen" else arch_pick).take(t_pos, said)
+        src, tag = (gen_pick if kind == "gen" else arch_pick).take(
+            t_pos, said, until=until)
         fr_name, fr = st.framing(src.name)
         return dict(kind="image", file=src, tag=tag,
                     framing=fr, framing_name=fr_name, **extra)
+
+    def bound_kind(t0: float, t1: float, dur: float):
+        """
+        Звучит ли на [t0, t1) фраза, под которую закреплён файл, ещё не
+        показанный под ней. «clip» / «arch» / None.
+
+        Такой слот уходит нужному виду материала ВНЕ ОЧЕРЕДИ — мимо жребия
+        доли и пропорции MaterialMix: кадр под эту фразу выбран глазами, и
+        отдать её фотографии из-за того, что видео «уже перебрало долю»,
+        значит выбросить ровно то решение, ради которого файл закрепляли.
+        Клип годится, только если закрывает слот целиком: петля внутри
+        кадра читается как брак.
+        """
+        for j in clip_pick.bound_here(t0, t1):
+            if (j not in clip_pick.bound_shown and dur <= st.clip_max_seconds
+                    and cutter.duration(clip_pick.pool[j][0]) >= dur):
+                return "clip"
+        if any(j not in arch_pick.bound_shown
+               for j in arch_pick.bound_here(t0, t1)):
+            return "arch"
+        return None
 
     def said_at(t_pos: float, span: float = 8.0) -> str:
         """Что звучит в эту секунду — текст предложений, накрывающих кадр."""
@@ -819,6 +936,14 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         # из одних фотографий лучше, чем отсутствие вступления.
         if idx == 0 and op["first_is_clip"] and clip_available():
             want_clip = True
+        # Привязанный к звучащей фразе файл решает вид кадра сам. Окно
+        # пробы — длинный край диапазона вступления.
+        probe = max(st.intro_clip_duration_range[1],
+                    st.intro_photo_duration_range[1])
+        forced = bound_kind(t, t + probe,
+                            st.intro_clip_duration_range[0])
+        if forced:
+            want_clip = forced == "clip"
         kind = "clip" if want_clip else "image"
         run_len = run_len + 1 if kind == run_kind else 1
         run_kind = kind
@@ -851,10 +976,10 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         allowed = (["clip"] if kind == "clip" else
                   (["gen"] if gen_available() else []) +
                   (["arch"] if arch_available() else []))
-        got = mix.pick(allowed)
+        got = "arch" if forced == "arch" else mix.pick(allowed)
 
         if got == "clip":
-            src, _ = clip_pick.take(t, said_at(t, dur))
+            src, _ = clip_pick.take(t, said_at(t, dur), until=t + dur)
             shots.append(dict(kind="clip", file=src, tag="clip",
                               src_start=cutter.take_start(src, dur),
                               move=repeat_move(clip_pick.last_repeat),
@@ -871,7 +996,8 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
             # подряд в первых трёх минутах.
             mv, sp = st.pick_move(1.05, allow_hold=False, only=INTRO_MOVES)
             shots.append(put_image(
-                got, t, said=said_at(t, dur), start=round(t, 3), duration=dur,
+                got, t, said=said_at(t, dur), until=t + dur,
+                start=round(t, 3), duration=dur,
                 move=mv, speed=sp,
                 transition=tr, transition_dur=trd,
                 effect=st.effect("hook"),
@@ -982,15 +1108,19 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         clip_ok = (not is_anchor and since_clip >= next_gap
                    and beat_wants_clip
                    and clip_fits(dur) and clip_available())
-        got = mix.pick((["clip"] if clip_ok else []) +
-                      (["gen"] if gen_available() else []) +
-                      (["arch"] if arch_available() else []))
+        forced = bound_kind(start, end, dur)
+        got = forced or mix.pick((["clip"] if clip_ok else []) +
+                                 (["gen"] if gen_available() else []) +
+                                 (["arch"] if arch_available() else []))
 
         said = " ".join(m["text"] for m in marks[first:best + 1])
         meta = dict(why=cfg.get("why", ""), beat_kind=cfg.get("beat_kind"))
+        if forced:
+            meta["why"] = (meta["why"] + "; " if meta["why"] else "") + \
+                "закреплён под эту фразу"
 
         if got == "clip":
-            src, _ = clip_pick.take(start, said)
+            src, _ = clip_pick.take(start, said, until=end)
             shots.append(dict(kind="clip", file=src, tag="clip",
                               src_start=cutter.take_start(src, dur),
                               move=repeat_move(clip_pick.last_repeat),
@@ -1013,7 +1143,8 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
         else:
             since_clip += 1
             shots.append(put_image(
-                got, start, said=said, start=start, duration=dur, **meta,
+                got, start, said=said, until=end, start=start, duration=dur,
+                **meta,
                 **{k: cfg[k] for k in
                    ("move", "speed", "transition", "transition_dur",
                     "effect")}))
@@ -1037,6 +1168,19 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     log(f"  подбор: генерация — {gen_pick.report()}")
     log(f"  подбор: архив     — {arch_pick.report()}")
     log(f"  подбор: сток      — {clip_pick.report()}")
+    # ПРИВЯЗКИ, КОТОРЫЕ НЕ СРАБОТАЛИ, — громко и поимённо. Обычная причина:
+    # клип короче кадра под этой фразой (выдох до 27 с) или кадр ушёл под
+    # вступление с другим материалом. Лечится длинным клипом или вторым
+    # файлом с тем же at.
+    for pick in (clip_pick, arch_pick):
+        lost = [j for j in pick.bound if j not in pick.bound_shown]
+        if pick.bound:
+            log(f"  привязки ({pick.pool[0][1]}): под своей фразой "
+                f"{len(pick.bound) - len(lost)} из {len(pick.bound)}")
+        for j in lost:
+            a, b = pick.bound[j][0]
+            log(f"  ! {pick.pool[j][0].name} не лёг под свою фразу "
+                f"({a:.0f}–{b:.0f} с)")
 
     # Что показано и сколько раз — уедет в журнал канала, чтобы следующий
     # ролик начал подбор с гандикапом на эти файлы. Генерация не считается:
