@@ -852,7 +852,8 @@ def main(job_path):
     work = Path("work") / job["id"] / "assets"
     if not work.exists():
         raise SystemExit(f"нет {work} — сначала собери материал")
-    vet_all(job, work, use_vision=job.get("vet_vision", True))
+    from assets import vision_on
+    vet_all(job, work, use_vision=vision_on(job))
 
 
 if __name__ == "__main__":

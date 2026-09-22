@@ -269,7 +269,10 @@ jobs:
             # shorts: только нарезка из готового final.mp4, ключи не нужны
             # вовсе — ни генерации, ни озвучки, ни обложек здесь нет.
             shorts)   need="" ; want="" ;;
-            *)        need="XAI_API_KEY ELEVENLABS_API_KEY PEXELS_API_KEY PIXABAY_API_KEY" ; want="ELEVENLABS_VOICE_ID MAGNIFIC_API_KEY" ;;
+            # XAI_API_KEY не обязателен: материал ищет и смотрит модель в
+            # чате, зрение xAI не используется, генерация — только если в
+            # спецификации есть image_prompts (тогда её проверит check_keys).
+            *)        need="ELEVENLABS_API_KEY PEXELS_API_KEY PIXABAY_API_KEY" ; want="XAI_API_KEY ELEVENLABS_VOICE_ID MAGNIFIC_API_KEY" ;;
           esac
           for k in $want; do
             eval "v=\$$k"
