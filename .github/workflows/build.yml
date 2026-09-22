@@ -8,7 +8,7 @@ on:
         required: true
         default: 'garage-sale-millions-ming-durer-faberge'
       stage:
-        description: 'material / vet / assets / render / post / shorts / auto'
+        description: 'scout / material / vet / assets / render / post / shorts / auto'
         required: true
         default: 'auto'
   # Автозапуск:
@@ -66,7 +66,34 @@ jobs:
                   REBUILD=$j
                   break
                 fi
-              done < <(git diff --name-only "$BEFORE" "${{ github.sha }}" -- '.github/rebuild/' || true)
+              # --diff-filter=AM: только добавленные и изменённые. УДАЛЕНИЕ
+              # файла тоже попадало в diff, содержимого у него нет, пустое
+              # трактовалось как auto — и уборка .github/rebuild запускала
+              # полный платный прогон.
+              done < <(git diff --diff-filter=AM --name-only "$BEFORE" "${{ github.sha }}" -- '.github/rebuild/' || true)
+            fi
+            # Та же защита, что у новой спецификации ниже: если rebuild-файл
+            # в ТОМ ЖЕ виде уже лежал во втором родителе мерж-коммита, он
+            # пришёл из ветки, и ветка свой прогон получила при пуше. Без
+            # этого мерж ветки с rebuild=auto в main — второй платный прогон.
+            if [ -n "$REBUILD" ]; then
+              P2=$(git rev-parse -q --verify "${{ github.sha }}^2" 2>/dev/null || true)
+              if [ -n "$P2" ] && git diff --quiet "$P2" "${{ github.sha }}" -- ".github/rebuild/$REBUILD" 2>/dev/null \
+                 && git cat-file -e "$P2:.github/rebuild/$REBUILD" 2>/dev/null; then
+                echo ".github/rebuild/$REBUILD пришёл мержем ветки — прогон уже"
+                echo "запускался пушем в саму ветку, второй не начинаю."
+                echo "Если тот не доехал — Actions -> Build video -> Run workflow."
+                echo "skip=true"        >> $GITHUB_OUTPUT
+                echo "job="             >> $GITHUB_OUTPUT
+                echo "stage=auto"       >> $GITHUB_OUTPUT
+                echo "id="              >> $GITHUB_OUTPUT
+                echo "do_assets=false"  >> $GITHUB_OUTPUT
+                echo "do_build=false"   >> $GITHUB_OUTPUT
+                echo "do_pack=false"    >> $GITHUB_OUTPUT
+                echo "do_shorts=false"  >> $GITHUB_OUTPUT
+                echo "from_release=false" >> $GITHUB_OUTPUT
+                exit 0
+              fi
             fi
             if [ -n "$REBUILD" ]; then
               JOB="$REBUILD"
@@ -75,7 +102,7 @@ jobs:
               # без workflow_dispatch.
               raw=$(tr -d '[:space:]' < ".github/rebuild/$JOB" 2>/dev/null || true)
               case "$raw" in
-                material|vet|assets|render|post|shorts|auto) STAGE=$raw ;;
+                scout|material|vet|assets|render|post|shorts|auto) STAGE=$raw ;;
                 *) STAGE=auto ;;
               esac
               echo "Принудительный перезапуск: .github/rebuild/$JOB (stage: $STAGE)"
@@ -172,7 +199,10 @@ jobs:
           # Полный прогон теперь только по явному auto.
           A=false; B=false; P=false; S=false; R=false
           case "$STAGE" in
-            material|vet) ;;
+            # scout — поиск кандидатов по сценам и контактные листы для
+            # выбора глазами в чате (pipeline/scout.py). Ничего не качает в
+            # кэш, не озвучивает, не монтирует.
+            scout|material|vet) ;;
             assets)  A=true ;;
             render)  B=true; P=true; S=true ;;
             post)    P=true; S=true; R=true ;;
@@ -180,7 +210,7 @@ jobs:
             auto)    A=true; B=true; P=true; S=true ;;
             *)
               echo "Неизвестная стадия: «$STAGE»"
-              echo "Ожидается одна из: material, vet, assets, render, post, shorts, auto"
+              echo "Ожидается одна из: scout, material, vet, assets, render, post, shorts, auto"
               echo "Полная сборка запускается ТОЛЬКО по явному auto — молча"
               echo "тратить час раннера на непонятное значение неправильно."
               exit 1 ;;
@@ -228,6 +258,7 @@ jobs:
           # генерация картинок целиком уходит на xAI, а сток-заплатка и
           # видео-вставки просто не добираются — штатный режим.
           case "${{ steps.pick.outputs.stage }}" in
+            scout)    need="" ; want="PEXELS_API_KEY PIXABAY_API_KEY" ;;
             material) need="" ; want="PEXELS_API_KEY PIXABAY_API_KEY MAGNIFIC_API_KEY" ;;
             vet)      need="" ; want="XAI_API_KEY" ;;
             render)   need="" ; want="" ;;
@@ -274,7 +305,7 @@ jobs:
       # Ключ уникален на запуск, восстановление по префиксу берёт самую
       # свежую запись. С постоянным ключом cache не сохраняет ничего.
       - name: Достаём материалы из кэша
-        if: steps.pick.outputs.skip != 'true'
+        if: steps.pick.outputs.skip != 'true' && steps.pick.outputs.stage != 'scout'
         uses: actions/cache/restore@v4
         with:
           path: work/${{ steps.pick.outputs.id }}/assets
@@ -413,6 +444,39 @@ jobs:
             Файлы при отказе не удаляются: отказ отменяется удалением
             номера, без повторного скачивания.
           files: work/${{ steps.pick.outputs.id }}/out/select_*.jpg
+          fail_on_unmatched_files: true
+
+      # ПОИСК МАТЕРИАЛА ПО СЦЕНАМ. Actions здесь — только руки с ключами:
+      # ищет по стокам и собирает контактные листы, а ВЫБИРАЕТ модель в
+      # чате, глядя на листы (scout.py pull -> pin -> check). Ключи Pexels и
+      # Pixabay живут только в секретах, поэтому поиск и идёт здесь.
+      - name: Поиск кандидатов по сценам
+        if: steps.pick.outputs.stage == 'scout'
+        env:
+          PEXELS_API_KEY:  ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+        run: |
+          set -e
+          python pipeline/scout.py search jobs/${{ steps.pick.outputs.job }}.json
+
+      # Релиз, а не артефакт: ссылка на релиз публичная и постоянная, и
+      # scout.py pull забирает листы оттуда без токена.
+      - name: Листы кандидатов отдельной ссылкой
+        if: steps.pick.outputs.stage == 'scout'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: scout-${{ steps.pick.outputs.job }}
+          name: Кандидаты материала — ${{ steps.pick.outputs.job }}
+          body: |
+            Контактные листы по сценам (scenes в спецификации): номер
+            кандидата — в подписи строки. Выбор делается в чате:
+
+                python pipeline/scout.py pull  jobs/${{ steps.pick.outputs.job }}.json
+                python pipeline/scout.py pin   jobs/${{ steps.pick.outputs.job }}.json s03-02@12.5
+                python pipeline/scout.py check jobs/${{ steps.pick.outputs.job }}.json
+          files: |
+            work/${{ steps.pick.outputs.id }}/scout/sheet_*.jpg
+            work/${{ steps.pick.outputs.id }}/scout/candidates.json
           fail_on_unmatched_files: true
 
       - name: Этап 1 — озвучка, изображения, материал

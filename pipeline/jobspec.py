@@ -124,6 +124,8 @@ KNOWN_TOP_LEVEL = {
     "photo_sources", "video_sources",
     # материал, закреплённый ЗАРАНЕЕ прямыми ссылками (см. PINNED_KEYS)
     "pinned_footage", "pinned_archive",
+    # сцены для поиска материала глазами (pipeline/scout.py, SCENE_KEYS)
+    "scenes",
     # расчёт хронометража: [минимум, максимум] минут, под который написан
     # сценарий. Ничего не задаёт монтажу — это запись решения, чтобы на
     # пересборке было видно, на какую длину рассчитывали.
@@ -155,7 +157,7 @@ LIST_FIELDS = ("script_blocks", "image_prompts", "footage_queries",
                "archive_queries", "graphic_queries", "fill_prompts",
                "photo_sources", "video_sources", "trusted_sources",
                "recent_luts", "recent_openings",
-               "pinned_footage", "pinned_archive")
+               "pinned_footage", "pinned_archive", "scenes")
 
 # ЗАКРЕПЛЁННЫЙ МАТЕРИАЛ. Ключ записи: url обязателен, остальное — по
 # желанию.
@@ -173,7 +175,58 @@ LIST_FIELDS = ("script_blocks", "image_prompts", "footage_queries",
 #           pinned_footage это video, для pinned_archive — image.
 #   note  — свободная заметка, зачем этот файл. Никуда не читается, но
 #           через месяц объясняет выбор лучше, чем сам url.
-PINNED_KEYS = {"url", "q", "src", "kind", "note"}
+#   at    — ЦИТАТА из сценария (кусок фразы, дословно), под которую этот
+#           файл выбран. Строка или список строк. Монтаж ставит файл ровно
+#           под эту фразу (build.plan_shots) и бережёт его до неё. Без at
+#           файл ложится по словам q — то есть примерно, а не точно.
+#   t0    — секунда исходного клипа, с которой начинается годный кусок
+#           (смотрели кадры — знаем, где заставка, где дрожит камера).
+#           Клип режется от неё, а не из середины.
+PINNED_KEYS = {"url", "q", "src", "kind", "note", "at", "t0"}
+
+# СЦЕНЫ — задание на поиск материала (pipeline/scout.py). Одна сцена —
+# один кусок сценария, под который нужен конкретный кадр.
+#
+#   id       — короткое имя (s01, s02…), из него номера кандидатов s01-03
+#   at       — цитата из сценария, как у закреплённого файла
+#   want     — ЧТО должно быть в кадре, английскими словами предмета. Уходит
+#              в q закреплённого файла.
+#   queries  — поисковые запросы к стокам (2-4 штуки, от узкого к широкому)
+#   kind     — "video" (умолчание), "image" или "any"
+#   n        — сколько кандидатов на запрос с источника (умолчание 4)
+SCENE_KEYS = {"id", "at", "want", "queries", "kind", "n", "note"}
+
+
+def norm_text(s: str) -> str:
+    """Текст для сверки цитаты со сценарием: без регистра, пунктуации и
+    лишних пробелов. Апостроф выбрасывается, иначе it's против its."""
+    import re
+    s = (s or "").lower().replace("\u2019", "").replace("'", "")
+    return " ".join(re.findall(r"[\w$£€]+", s))
+
+
+def at_list(item: dict) -> list[str]:
+    at = item.get("at")
+    if not at:
+        return []
+    return [a for a in ([at] if isinstance(at, str) else at) if str(a).strip()]
+
+
+def find_at(texts: list[str], quote: str):
+    """
+    Индексы подряд идущих текстов (предложений), в которых стоит цитата.
+    Сначала ищется в одном предложении, потом на стыке двух-трёх — цитата
+    иногда захватывает конец одной фразы и начало следующей. None — нет.
+    """
+    q = norm_text(quote)
+    if not q:
+        return None
+    normed = [norm_text(t) for t in texts]
+    for span in (1, 2, 3):
+        for i in range(len(normed) - span + 1):
+            if q in " ".join(normed[i:i + span]):
+                return list(range(i, i + span))
+    return None
 
 
 def check(job: dict) -> tuple[list[str], list[str]]:
@@ -189,6 +242,10 @@ def check(job: dict) -> tuple[list[str], list[str]]:
     оплачен.
     """
     stop, note = [], []
+    # Цитаты at сверяются с блоками целиком: цитата живёт внутри одного
+    # блока, а границы предложений здесь не нужны.
+    script = [str(b) for b in (job.get("script_blocks") or [])
+              if isinstance(b, str)]
 
     unknown = sorted(k for k in job
                      if not str(k).startswith("_") and k not in KNOWN_TOP_LEVEL)
@@ -266,6 +323,50 @@ def check(job: dict) -> tuple[list[str], list[str]]:
                 note.append(f"{where}: нет q — build.kw_of() не сможет "
                             f"подобрать этот файл по смыслу, и он ляжет под "
                             f"текст случайно")
+            t0 = it.get("t0")
+            if t0 is not None and not (isinstance(t0, (int, float)) and t0 >= 0):
+                stop.append(f"{where}: t0={t0!r} — секунда исходника, число >= 0")
+            # ЦИТАТА ОБЯЗАНА НАЙТИСЬ В СЦЕНАРИИ. Не нашлась — привязка
+            # молча пропала бы, и файл лёг бы по словам куда придётся: ровно
+            # та неточность, ради которой at и заведён. Стоп, а не заметка:
+            # правка одной строки дешевле ролика с кадром не под своей фразой.
+            for a in at_list(it):
+                if find_at(script, a) is None:
+                    stop.append(f"{where}: at «{a[:60]}» нет в script_blocks "
+                                f"дословно — привязка к фразе не сработает")
+
+    # СЦЕНЫ ПОИСКА. Те же требования к цитате, что у закреплённого файла:
+    # scout.py pin переносит at сцены в запись как есть.
+    scenes = job.get("scenes")
+    if isinstance(scenes, list):
+        ids = set()
+        for i, sc in enumerate(scenes):
+            where = f"scenes[{i}]"
+            if not isinstance(sc, dict):
+                stop.append(f"{where}: нужен объект")
+                continue
+            bad = sorted(k for k in sc if k not in SCENE_KEYS)
+            if bad:
+                stop.append(f"{where}: неизвестные ключи " + ", ".join(bad) +
+                            ". Допустимо: " + ", ".join(sorted(SCENE_KEYS)))
+            sid = str(sc.get("id") or "")
+            if not sid or "-" in sid or "@" in sid:
+                stop.append(f"{where}: id {sid!r} — нужен короткий id без "
+                            f"«-» и «@» (s01)")
+            elif sid in ids:
+                stop.append(f"{where}: id {sid} повторяется")
+            ids.add(sid)
+            if not isinstance(sc.get("queries"), list) or not sc.get("queries"):
+                stop.append(f"{where}: queries — непустой список запросов")
+            if sc.get("kind", "video") not in ("video", "image", "any"):
+                stop.append(f"{where}: kind — video, image или any")
+            for a in at_list(sc):
+                if find_at(script, a) is None:
+                    stop.append(f"{where}: at «{a[:60]}» нет в script_blocks "
+                                f"дословно")
+            if not at_list(sc):
+                note.append(f"{where}: нет at — закреплённый из этой сцены "
+                            f"файл не будет привязан к фразе")
 
     tm = job.get("target_minutes")
     if tm is not None:

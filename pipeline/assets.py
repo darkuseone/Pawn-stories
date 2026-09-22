@@ -59,7 +59,7 @@ CREDIT_SKIP = 8.0
 
 
 def trim_long_clip(path: Path, limit: float = MAX_CLIP_SECONDS,
-                   from_middle: bool = False) -> None:
+                   from_middle: bool = False, start_at=None) -> None:
     """
     Подрезает скачанный клип до потолка. Тихо ничего не делает, если короче
     и резать с начала.
@@ -67,6 +67,10 @@ def trim_long_clip(path: Path, limit: float = MAX_CLIP_SECONDS,
     from_middle: берём окно из середины и пропускаем первые CREDIT_SKIP
     секунд — для archive.org и Wikimedia, где заставка кредитов сидит
     в начале файла.
+
+    start_at: ТОЧКА ВХОДА, выбранная глазами (поле t0 закреплённого
+    файла). Кадры клипа уже посмотрели и знают, где годный кусок, — резать
+    «из середины» тут значит выбросить именно его.
     """
     r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
                         "format=duration", "-of", "csv=p=0", str(path)],
@@ -76,12 +80,17 @@ def trim_long_clip(path: Path, limit: float = MAX_CLIP_SECONDS,
     except ValueError:
         return
     start = 0.0
-    if from_middle and dur > CREDIT_SKIP + 4.0:
-        start = CREDIT_SKIP
-    if dur > limit + 0.5:
-        start = max(start, (dur - limit) / 2.0)
-    elif start < 0.4:
-        return
+    if start_at is not None:
+        start = max(0.0, min(float(start_at), max(0.0, dur - 2.0)))
+        if start < 0.4 and dur <= limit + 0.5:
+            return
+    else:
+        if from_middle and dur > CREDIT_SKIP + 4.0:
+            start = CREDIT_SKIP
+        if dur > limit + 0.5:
+            start = max(start, (dur - limit) / 2.0)
+        elif start < 0.4:
+            return
     take = min(limit, max(0.0, dur - start))
     if take < 2.0:
         return
@@ -1790,9 +1799,14 @@ def fetch_pinned(job, work: Path):
                 missed.append(url)
                 continue
             if file_kind == "video":
-                trim_long_clip(dst)
-            got.append({"file": str(dst), "q": it.get("q") or "",
-                        "url": url, "src": src, "kind": file_kind})
+                trim_long_clip(dst, start_at=it.get("t0"))
+            row = {"file": str(dst), "q": it.get("q") or "",
+                   "url": url, "src": src, "kind": file_kind}
+            # Привязка к фразе едет в манифест: монтаж читает её оттуда,
+            # как читает q (build.keywords_for / pinned_bindings).
+            if it.get("at"):
+                row["at"] = it["at"]
+            got.append(row)
             log(f"  {kind} {n:03d}: {src}  «{it.get('q') or '—'}»")
             n += 1
 
