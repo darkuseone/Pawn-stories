@@ -110,11 +110,35 @@ def with_effect(vf: str, effect) -> str:
     return f"{vf},{fx}" if fx else vf
 
 
+def with_grade(vf: str, grade) -> str:
+    """
+    Цветокор кадра (lut3d с запечённой плёночной базой, build.bake_grades)
+    встаёт ПОСЛЕДНИМ — после движения и эффекта, ровно в том порядке, в
+    каком раньше его накладывала склейка.
+
+    ЗДЕСЬ, А НЕ В СКЛЕЙКЕ, ради скорости. Кадры рендерятся параллельно на
+    всех ядрах, а склейка группы — один процесс с графом на двенадцать
+    входов, где lut3d на каждом входе стоил ~25 с из ~90 с группы (замер на
+    синтетике, 33 с видео). Побочный плюс для качества: цветокор ложится на
+    несжатый кадр, а не на уже пожатый crf 18 — растяжка теней больше не
+    раздувает блоки кодека.
+    """
+    return f"{vf},lut3d=file={Path(grade).as_posix()}" if grade else vf
+
+
 def render_clip(image: Path, out: Path, move: str, speed: float, dur: float,
-                effect=None):
-    vf = with_effect(motion_filter(move, speed, dur), effect)
-    cmd = (f"ffmpeg -y -loop 1 -t {dur:.3f} -r {FPS} -i {shlex.quote(str(image))} "
-           f"-vf {shlex.quote(vf)} -c:v libx264 -crf 18 -preset veryfast "
+                effect=None, grade=None):
+    """
+    Картинка ДЕКОДИРУЕТСЯ ОДИН РАЗ. Было `-loop 1 -i кадр.jpg`: демуксер
+    картинок на каждом кадре заново читал и разжимал JPEG 3000x1687 — ~11 мс
+    на кадр, треть всего времени рендера фото-кадра. Фильтр loop повторяет
+    уже разжатый кадр; выход бит-в-бит тот же (PSNR inf на замере), рендер
+    фото-кадра быстрее на ~27%.
+    """
+    vf = with_grade(with_effect(motion_filter(move, speed, dur), effect), grade)
+    vf = f"loop=loop=-1:size=1,setpts=N/{FPS}/TB,fps={FPS},{vf}"
+    cmd = (f"ffmpeg -y -i {shlex.quote(str(image))} "
+           f"-vf {shlex.quote(vf)} -t {dur:.3f} -c:v libx264 -crf 18 -preset veryfast "
            f"-pix_fmt yuv420p -an {shlex.quote(str(out))}")
     run(cmd)
 
@@ -146,7 +170,7 @@ def footage_motion(move: str, dur: float) -> str:
 
 
 def render_footage_clip(src: Path, out: Path, dur: float, start: float = 0.0,
-                        effect=None, move=None):
+                        effect=None, move=None, grade=None):
     """
     Стоковый футаж: обрезка, приведение к 1920x1080/25fps, без звука.
 
@@ -163,7 +187,7 @@ def render_footage_clip(src: Path, out: Path, dur: float, start: float = 0.0,
             f"crop={W}:{H}")
     if move:
         base += "," + footage_motion(move, dur)
-    vf = with_effect(f"{base},fps={FPS},setsar=1", effect)
+    vf = with_grade(with_effect(f"{base},fps={FPS},setsar=1", effect), grade)
     cmd = (f"ffmpeg -y -stream_loop -1 -ss {start:.2f} -i {shlex.quote(str(src))} "
            f"-vf {shlex.quote(vf)} -t {dur:.3f} "
            f"-c:v libx264 -crf 18 -preset veryfast "
@@ -180,7 +204,8 @@ def _freeze_frame(src: Path, dst: Path, start: float = 0.0) -> bool:
     return r.returncode == 0 and dst.exists() and dst.stat().st_size > 1000
 
 
-def render_card(text: str, out: Path, dur: float, bg=None, bg_start: float = 0.0):
+def render_card(text: str, out: Path, dur: float, bg=None, bg_start: float = 0.0,
+                grade=None):
     """
     Пауза перед новой историей: кадр следующей истории + стекло с названием.
 
@@ -190,8 +215,8 @@ def render_card(text: str, out: Path, dur: float, bg=None, bg_start: float = 0.0
     выпуска, fade in/out внутри паузы. Ken Burns сюда не ставится — у
     карточки нет ключей move/speed/framing (см. insert_chapter_cards).
 
-    Кодируется теми же параметрами, что и обычный кадр: join() грейдит
-    любой kind одинаково.
+    Кодируется теми же параметрами и красится тем же цветокором, что и
+    обычный кадр (grade — после стекла, как раньше красила склейка).
     """
     import type as type_mod
     ass = out.with_suffix(".ass")
@@ -199,6 +224,7 @@ def render_card(text: str, out: Path, dur: float, bg=None, bg_start: float = 0.0
     vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
           f"crop={W}:{H},setsar=1,fps={FPS},"
           f"ass={ass.as_posix()}:fontsdir={type_mod.fontsdir()}")
+    vf = with_grade(vf, grade)
     still = out.with_suffix(".bg.jpg")
     src = Path(bg) if bg else None
     ok = bool(src and src.exists() and _freeze_frame(src, still, bg_start))
@@ -216,24 +242,9 @@ def render_card(text: str, out: Path, dur: float, bg=None, bg_start: float = 0.0
     ass.unlink(missing_ok=True)
 
 
-def burn_ass(src: Path, ass: Path, dst: Path, fontsdir: str, crf: int = 18):
-    """
-    Второй проход ASS на уже склеенном ролике — название выпуска 1–5 с.
-
-    Не покадровый ререндер и не новый клип в начале: фильтр ass жжёт
-    стекло поверх существующих первых кадров. Перекодируется весь silent
-    одним проходом (оченьfast) — дешевле, чем резать по ключевому кадру
-    и ловить шов, дороже Remotion на порядок.
-    """
-    vf = f"ass={ass.as_posix()}:fontsdir={fontsdir}"
-    run(f"ffmpeg -y -i {shlex.quote(str(src))} -vf {shlex.quote(vf)} "
-        f"-c:v libx264 -crf {crf} -preset veryfast -pix_fmt yuv420p -an "
-        f"{shlex.quote(str(dst))}")
-
-
-def concat_segments(segments, out: Path):
+def concat_segments(segments, out: Path, listname: str = "concat.txt"):
     """Финальная склейка без перекодирования — быстро и без потерь."""
-    lst = out.parent / "concat.txt"
+    lst = out.parent / listname
     lst.write_text("".join(f"file '{Path(s).resolve()}'\n" for s in segments))
     run(f"ffmpeg -y -f concat -safe 0 -i {shlex.quote(str(lst))} "
         f"-c copy {shlex.quote(str(out))}")

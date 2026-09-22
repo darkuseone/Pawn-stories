@@ -26,7 +26,7 @@ import os
 import shlex
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -1489,29 +1489,30 @@ def set_render_durations(shots):
 # ───────────────────────── РЕНДЕР ─────────────────────────
 
 def render_one(args):
-    n, sh, tmp = args
+    n, sh, tmp, grade = args
     out = tmp / f"clip_{n:04d}.mp4"
     if out.exists():
         return out
     if sh["kind"] == "card":
         render.render_card(sh["card_text"], out, sh["render_dur"],
                            bg=sh.get("card_bg"),
-                           bg_start=float(sh.get("card_bg_start") or 0.0))
+                           bg_start=float(sh.get("card_bg_start") or 0.0),
+                           grade=grade)
     elif sh["kind"] == "clip":
         render.render_footage_clip(Path(sh["file"]), out, sh["render_dur"],
                                    start=sh.get("src_start", 0.0),
                                    effect=sh.get("effect"),
-                                   move=sh.get("move"))
+                                   move=sh.get("move"), grade=grade)
     else:
         prep = tmp / f"prep_{n:04d}.jpg"
         render.prepare_image(Path(sh["file"]), prep, sh["framing"])
         render.render_clip(prep, out, sh["move"], sh["speed"], sh["render_dur"],
-                           effect=sh.get("effect"))
+                           effect=sh.get("effect"), grade=grade)
         prep.unlink(missing_ok=True)
     return out
 
 
-def grade_for(shot, st):
+def grade_for(shot, grades):
     """
     Цветокор ОДНОГО кадра.
 
@@ -1524,11 +1525,10 @@ def grade_for(shot, st):
     ошибка была редкой и незаметной. При доле генерации в 30% большинство
     групп начинается реальным материалом — и весь смысл двух цветокоров
     пропадал: архив красился семейным, генерация архивным, через кадр
-    вперемешку. Теперь грейд лежит на каждом входе отдельно, см. join().
+    вперемешку. Теперь грейд лежит на каждом кадре отдельно — уже при его
+    рендере (render.with_grade), таблицей из bake_grades().
     """
-    if shot.get("tag") == "arch":
-        return LUTS / f"{st.archive_lut}.cube"
-    return LUTS / f"{st.lut}.cube"
+    return grades["arch"] if shot.get("tag") == "arch" else grades["main"]
 
 
 def film_look():
@@ -1565,6 +1565,69 @@ def film_look():
     )
 
 
+# Размер запечённой таблицы: HALD уровня 6 = куб 36^3. Исходные таблицы
+# канала 17^3, так что точности это не теряет, а файл (~1.3 МБ) ffmpeg
+# разбирает за доли секунды на каждом из сотен кадров.
+BAKE_LEVEL = 6
+
+
+def bake_grades(st, tmp: Path) -> dict:
+    """
+    Цветокор + плёночная база одной таблицей lut3d на каждый цветокор.
+
+    ЗАЧЕМ. Раньше склейка группы красила каждый из двенадцати входов своим
+    lut3d, а поверх склеенного клала film_look() — eq и curves. У этих
+    фильтров разные форматы кадра, и ffmpeg молча вставлял между ними
+    конвертации: yuv -> rgb (lut3d) -> yuv444 (eq) -> rgb (curves) -> rgb24
+    (виньетка) -> yuv420. Всё это — в ОДНОМ процессе на группу, который шёл
+    строго последовательно, и именно склейка съедала больше половины
+    монтажа. Замер на синтетике: 84 с фильтров на 33 с видео группы.
+
+    lut3d, eq и curves — попиксельные преобразования цвета, их композиция
+    сама является таблицей. Считает её сам ffmpeg: тождественная HALD-
+    картинка прогоняется через ТУ ЖЕ цепочку (lut3d, потом film_look() в
+    том же порядке eq -> curves), результат пишется в .cube. Разница с
+    прежним видом — округление таблицы, на глаз не видна. Одно
+    отличие по смыслу: плёночная база теперь ложится на каждый кадр ДО
+    перехода, а не на смесь двух кадров во время перехода — на полсекунды
+    наплыва это разница в долях процента яркости.
+
+    Запекается один раз на прогон (кэш в tmp по хэшу исходной таблицы и
+    film_look), рендер кадров получает готовый путь.
+    """
+    import hashlib
+    from PIL import Image
+    n = BAKE_LEVEL * BAKE_LEVEL
+    out = {}
+    for key, name in (("main", st.lut), ("arch", st.archive_lut)):
+        src = LUTS / f"{name}.cube"
+        sig = hashlib.sha1(src.read_bytes() + film_look().encode()).hexdigest()[:10]
+        dst = tmp / f"grade_{name}_{sig}.cube"
+        if not dst.exists():
+            png = dst.with_suffix(".png")
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+                 "-i", f"haldclutsrc=level={BAKE_LEVEL}", "-frames:v", "1",
+                 "-vf", f"lut3d=file={src.as_posix()},{film_look()},format=rgb24",
+                 str(png)], check=True)
+            im = Image.open(png).convert("RGB")
+            px = im.tobytes()
+            if len(px) != n ** 3 * 3:
+                raise SystemExit(f"запекание цветокора {name}: размер HALD "
+                                 f"{im.size} не сходится с кубом {n}")
+            # Порядок HALD совпадает с порядком .cube: красный меняется
+            # быстрее всех, синий медленнее всех.
+            lines = [f"LUT_3D_SIZE {n}"]
+            for i in range(0, len(px), 3):
+                lines.append(f"{px[i]/255:.5f} {px[i+1]/255:.5f} {px[i+2]/255:.5f}")
+            tmp_dst = dst.with_suffix(".part")
+            tmp_dst.write_text("\n".join(lines) + "\n")
+            tmp_dst.replace(dst)
+            png.unlink(missing_ok=True)
+        out[key] = dst
+    return out
+
+
 def text_for_group(group, moments):
     """
     Карточки, попадающие в эту группу склейки, с пересчётом в локальное время.
@@ -1587,21 +1650,63 @@ def text_for_group(group, moments):
     return out
 
 
-def join(group, out: Path, st, sparks, first=False, moments=None):
+def overlay_fontsdir() -> str:
+    import type as type_mod
+    return type_mod.fontsdir()
+
+
+def group_frames(shots, gi):
+    """
+    Первый кадр группы на шкале ролика и число кадров в ней — ТОЧНО по плану.
+
+    Без этого каждая группа выходила на кадр длиннее плана (ffmpeg
+    округляет длину клипа, xfade доедает хвост), и после сшивки картинка
+    накапливала отставание от голоса: замер на синтетике +0.05 с за две
+    группы, на получасовом ролике из ~25 групп — до 0.8 с к концу. Склейка
+    теперь режет группу ровно по границе плана и при нехватке добивает
+    последний кадр повтором, так что группа k начинается ровно на кадре
+    round(start * FPS) — это же даёт субтитрам точный сдвиг в join().
+
+    Конец группы берётся как НАЧАЛО СЛЕДУЮЩЕЙ, а не как start + duration
+    последнего кадра: сумма с плавающей точкой даёт 71.4499… там, где у
+    следующей группы стоит 71.45, и округление теряло кадр на стыке.
+    """
+    f0 = round(shots[gi]["start"] * FPS)
+    nxt = gi + SEG_SIZE
+    if nxt < len(shots):
+        g1 = shots[nxt]["start"]
+    else:
+        g1 = shots[-1]["start"] + shots[-1]["duration"]
+    return f0, round(g1 * FPS) - f0
+
+
+def join(group, out: Path, st, sparks, frames, first=False, moments=None,
+         overlay=None, titled=None):
+    """
+    Склейка группы кадров: переходы, искры, зерно, виньетка, карточки.
+
+    frames — (первый кадр группы на шкале ролика, число кадров), из
+    group_frames().
+
+    overlay — ASS с надписями ролика (название, субтитры, итог). Если он
+    есть, из ОДНОГО графа выходят два файла: out — без надписей (исходник
+    шортсов) и titled — с ними. Раньше надписи жглись отдельным проходом по
+    всему склеенному ролику: ещё одно полное декодирование и ещё одно
+    сжатие crf 22 поверх уже сжатого — лишнее поколение потерь в
+    final.mp4 и ~12 минут на получасовом ролике строго в один поток.
+    Время у libass — абсолютное, поэтому кадрам группы на время прохода
+    возвращается их место на шкале ролика (setpts +сдвиг).
+    """
     ins = " ".join(f'-i "{c["file"]}"' for c in group)
     if sparks is not None:
         ins += f' -stream_loop -1 -i "{sparks}"'
     sp = len(group)
 
-    # Цветокор ложится НА КАЖДЫЙ ВХОД до склейки, а не на готовую группу
-    # после неё. Иначе вся дюжина кадров красится по первому из них, и
-    # архивное фото получает семейный грейд, а генерация — архивный.
-    # Считается это ровно столько же: кадров на входе почти столько же,
-    # сколько на выходе, xfade их не размножает.
-    fc = [f'[{k}:v]lut3d=file={grade_for(sh, st)}[g{k}]'
-          for k, sh in enumerate(group)]
-
-    prev, off = "g0", 0.0
+    # Цветокор уже в кадре: он лёг при рендере (grade_for, bake_grades).
+    # Кадры приходят в yuv420p, и переходы идут в нём же — xfade смешивает
+    # линейно, в yuv это та же смесь, без двенадцати конвертаций в rgb.
+    fc = []
+    prev, off = "0:v", 0.0
     for k in range(1, len(group)):
         tr = group[k - 1]
         d = xfade_dur(tr)
@@ -1609,12 +1714,14 @@ def join(group, out: Path, st, sparks, first=False, moments=None):
         # смещение — ровно граница предложения, а не длина файла: кадр k
         # встаёт на ту секунду звука, где начинается его первое предложение
         off += tr["duration"]
-        fc.append(f'[{prev}][g{k}]xfade=transition={name}:'
+        fc.append(f'[{prev}][{k}:v]xfade=transition={name}:'
                   f'duration={d:.3f}:offset={off:.3f}[x{k}]')
         prev = f"x{k}"
 
-    # Плёночная база — общая на ролик, поэтому лежит уже на склеенном.
-    fc.append(f'[{prev}]' + film_look() + '[graded]')
+    # Искры и зерно — в rgb, как было: screen-смешение в yuv красит
+    # цветность, а зерно по трём каналам rgb выглядит иначе, чем по
+    # прореженной цветности yuv420. Конвертация одна на группу.
+    fc.append(f'[{prev}]format=gbrp[graded]')
     # Слой один — искры, и его может не быть вовсе. Дымку с канала убрали:
     # атмосферность уже в LUT через подъём чёрного, второй слой её только мылил.
     if sparks is not None:
@@ -1633,6 +1740,10 @@ def join(group, out: Path, st, sparks, first=False, moments=None):
     post = []
     if st.grain:
         post.append(f"noise=alls={st.grain}:allf=t+u")
+    # Виньетка — уже в yuv420p. Раньше ffmpeg вставлял под неё конвертацию
+    # в rgb24 и обратно; замер: 20 с из 84 на группу. Разница с rgb-
+    # виньеткой — PSNR 48.5 дБ, на глаз не видна.
+    post.append("format=yuv420p")
     if st.vignette:
         # Зажим В ТОЧКЕ ПРИМЕНЕНИЯ, а не только на источнике жребия.
         # st.vignette — делитель в PI/значение, то есть МЕНЬШЕ число здесь
@@ -1657,12 +1768,25 @@ def join(group, out: Path, st, sparks, first=False, moments=None):
     chain = textcard.filter_chain(text_for_group(group, moments or []))
     if chain:
         post.append(chain)
+    # Точная длина группы по плану — см. group_frames. tpad страхует от
+    # нехватки кадра, trim отрезает лишний.
+    f0, nframes = frames
+    post.append(f"tpad=stop_mode=clone:stop=3,trim=end_frame={nframes}")
     post.append("setsar=1")
-    fc.append(f'[{last}]' + ",".join(post) + '[out]')
+    enc = f'-c:v libx264 -crf {st.crf} -preset {st.preset} -pix_fmt yuv420p -an'
+    if overlay is not None and titled is not None:
+        fc.append(f'[{last}]' + ",".join(post) + ',split=2[out][pre]')
+        fc.append(f'[pre]setpts=PTS+{f0}/{FPS}/TB,'
+                  f'ass={Path(overlay).as_posix()}:fontsdir={overlay_fontsdir()},'
+                  f'setpts=PTS-STARTPTS[titled]')
+        maps = (f'-map "[out]" {enc} "{out}" '
+                f'-map "[titled]" {enc} "{titled}"')
+    else:
+        fc.append(f'[{last}]' + ",".join(post) + '[out]')
+        maps = f'-map "[out]" {enc} "{out}"'
 
-    cmd = (f'ffmpeg -y {ins} -filter_complex "{";".join(fc)}" -map "[out]" '
-           f'-c:v libx264 -crf {st.crf} -preset {st.preset} '
-           f'-pix_fmt yuv420p -an "{out}"')
+    cmd = f'ffmpeg -y {ins} -filter_complex "{";".join(fc)}" {maps}'
+
     # stderr БОЛЬШЕ НЕ ГЛУШИТСЯ НАСМЕРТЬ. Раньше здесь стояло
     # stderr=DEVNULL с check=True, и падение группы склейки приходило в лог
     # голым «returned non-zero exit status 1» — без имени фильтра, без
@@ -1903,39 +2027,23 @@ def main(job_path):
     (out / "style.json").write_text(
         json.dumps(card, ensure_ascii=False, indent=1), encoding="utf-8")
 
+    log("── цветокор: запекаю таблицы")
+    grades = bake_grades(st, tmp)
+
     log("── рендер кадров")
     with ThreadPoolExecutor(max_workers=cores()) as ex:
         files = list(ex.map(render_one,
-                            [(n, s, tmp) for n, s in enumerate(shots)]))
+                            [(n, s, tmp, grade_for(s, grades))
+                             for n, s in enumerate(shots)]))
     for s, f in zip(shots, files):
         s["file"] = f
 
-    log("── склейка и цветокор")
-    sparks = ensure_overlays(st)
-    segs = []
-    for gi in range(0, len(shots), SEG_SIZE):
-        group = shots[gi:gi + SEG_SIZE]
-        seg = tmp / f"seg_{gi//SEG_SIZE:03d}.mp4"
-        if not seg.exists():
-            join(group, seg, st, sparks, first=(gi == 0), moments=moments)
-        segs.append(seg)
-        log(f"  группа {gi//SEG_SIZE + 1}/{math.ceil(len(shots)/SEG_SIZE)}")
-
-    log("── сшивка")
-    silent = tmp / "silent.mp4"
-    render.concat_segments(segs, silent)
-    # ЧИСТОЕ ВИДЕО ДЛЯ ШОРТСОВ. Ниже в silent вжигаются надписи, и дальше
-    # переменная указывает уже на файл с ними. Шортсам нужен кадр БЕЗ них:
-    # они режут вертикальный кусок, а субтитры длинного ролика в нём
-    # остаются чужой строкой поверх своей. Помним исходник до вжигания.
-    clean = silent
-
-    # ── НАДПИСИ: ОДИН ПРОХОД ASS НА ВСЁ ──────────────────────────────
+    # ── НАДПИСИ: ОДИН ФАЙЛ ASS НА ВСЁ ─────────────────────────────────
     # Название выпуска, субтитры с заливкой по словам и карточка-итог —
-    # один файл ASS и одно перекодирование. Проход здесь был и раньше (им
-    # жглось только название), а libass рисует хоть одну надпись, хоть все
-    # три за те же деньги: второй такой же проход ради субтитров стоил бы
-    # ещё одного полного перекодирования получасового ролика.
+    # один файл ASS. Жжётся он теперь ВНУТРИ склейки групп (см. join):
+    # отдельный проход по всему ролику был ещё одним полным
+    # перекодированием, строго в один поток, и ещё одним поколением потерь
+    # сжатия в final.mp4.
     #
     # marks_final — шкала ГОТОВОГО ролика (с паузами глав). Субтитры
     # считаются по ней, а не по кэшированным marks: иначе после первой же
@@ -1950,23 +2058,58 @@ def main(job_path):
             "субтитры в ролик не вжигаются; подсветка по оценке хуже, чем "
             "её отсутствие. Лечится любым прогоном stage: assets")
     recap, cta = type_mod.outro_lines(job)
+    overlay_ass = None
     if kicker or (want_subs and have_words) or recap or cta:
-        log(f"── надписи одним проходом ASS: "
+        log(f"── надписи одним файлом ASS: "
             f"название «{kicker}»"
             + (", субтитры с подсветкой" if want_subs and have_words else "")
             + (f", итог «{recap}»" if recap else ""))
         overlay_ass = tmp / "overlay.ass"
         type_mod.write_overlay_ass(job, overlay_ass, final_marks, total,
                                    W, H, subs=want_subs and have_words)
-        titled = tmp / "silent_titled.mp4"
-        # crf БЕРЁТСЯ ИЗ СТИЛЯ, а не из умолчания функции. Раньше здесь
-        # стоял зашитый crf 18: сегменты жались по st.crf (22 у канала), а
-        # последний проход перекодировал весь ролик заново на 18 — файл
-        # раздувался, и совет «подними crf в style_override» из проверки
-        # размера ниже не действовал вовсе.
-        render.burn_ass(silent, overlay_ass, titled, type_mod.fontsdir(),
-                        crf=st.crf)
-        silent = titled
+
+    # ГРУППЫ СКЛЕИВАЮТСЯ ПАРАЛЛЕЛЬНО. Раньше — строго по одной, и это была
+    # самая долгая часть монтажа: граф на двенадцать входов почти не
+    # грузит больше одного ядра, остальные три стояли. Группы друг от друга
+    # не зависят (каждая от нуля, сшивка потом встык), так что порядок
+    # восстанавливается по номеру, а не по времени завершения.
+    log("── склейка групп")
+    sparks = ensure_overlays(st)
+    n_groups = math.ceil(len(shots) / SEG_SIZE)
+
+    def join_group(gi):
+        group = shots[gi:gi + SEG_SIZE]
+        k = gi // SEG_SIZE
+        seg = tmp / f"seg_{k:03d}.mp4"
+        seg_t = tmp / f"segt_{k:03d}.mp4" if overlay_ass else None
+        if not seg.exists() or (seg_t and not seg_t.exists()):
+            join(group, seg, st, sparks, group_frames(shots, gi),
+                 first=(gi == 0), moments=moments,
+                 overlay=overlay_ass, titled=seg_t)
+        return seg, seg_t
+
+    done = 0
+    results = {}
+    with ThreadPoolExecutor(max_workers=cores()) as ex:
+        futs = {ex.submit(join_group, gi): gi
+                for gi in range(0, len(shots), SEG_SIZE)}
+        for fu in as_completed(futs):
+            results[futs[fu]] = fu.result()
+            done += 1
+            log(f"  группа {done}/{n_groups}")
+    order = sorted(results)
+
+    log("── сшивка")
+    # ЧИСТОЕ ВИДЕО ДЛЯ ШОРТСОВ — clean, без надписей: шортсы режут
+    # вертикальный кусок, и субтитры длинного ролика в нём остались бы
+    # чужой строкой поверх своей.
+    clean = tmp / "silent.mp4"
+    render.concat_segments([results[g][0] for g in order], clean)
+    silent = clean
+    if overlay_ass:
+        silent = tmp / "silent_titled.mp4"
+        render.concat_segments([results[g][1] for g in order], silent,
+                               listname="concat_titled.txt")
 
     log("── звук")
     mixed = tmp / "audio.m4a"
