@@ -333,7 +333,8 @@ jobs:
           mkdir -p "$DIR"
           gh release download "final-${{ steps.pick.outputs.job }}" \
             --repo "${{ github.repository }}" \
-            --pattern "final.mp4" --pattern "clean.mp4" --pattern "subs.srt" \
+            --pattern "final.mp4" --pattern "clean.mp4" \
+            --pattern "_shorts-source.mp4" --pattern "subs.srt" \
             --pattern "marks_final.json" \
             --dir "$DIR" --clobber || true
           test -f "$DIR/final.mp4" || {
@@ -343,9 +344,14 @@ jobs:
           # clean.mp4 — тот же ролик без вжжённых надписей, из него режутся
           # шортсы. В релизах, собранных до его появления, его нет: shorts.py
           # переживёт это сам, срезав низ кадра, и скажет об этом в лог.
+          # Новое имя _shorts-source.mp4, старое clean.mp4 — у релизов до
+          # переименования. Берём любое и кладём под тем, что ждёт shorts.py.
+          # || true обязателен: под set -e голый [ -f ] && cp роняет весь шаг,
+          # когда файла нет, — а его законно нет у прежних релизов.
+          [ -f "$DIR/_shorts-source.mp4" ] && cp "$DIR/_shorts-source.mp4" "$DIR/clean.mp4" || true
           test -f "$DIR/clean.mp4" \
-            && echo "clean.mp4 взят из релиза — шортсы режутся из полного кадра" \
-            || echo "clean.mp4 в релизе нет (ролик собран до этой правки) — шортсы возьмут только верх кадра final.mp4"
+            && echo "исходник шортсов взят из релиза — режем из полного кадра" \
+            || echo "исходника шортсов в релизе нет (ролик собран до этой правки) — шортсы возьмут только верх кадра final.mp4"
           test -f "$DIR/marks_final.json" \
             && echo "marks_final.json взят из релиза" \
             || echo "marks_final.json в релизе нет — shorts.py пересчитает сдвиг сам"
@@ -497,6 +503,19 @@ jobs:
       # Всё, что нужно человеку, одной ссылкой: длинный ролик, шортсы,
       # две обложки и субтитры. Шортсы помечены звёздочкой — на коротком
       # ролике второго шортса может не быть, и это не ошибка.
+      # clean.mp4 УЕЗЖАЕТ В РЕЛИЗ ПОД СЛУЖЕБНЫМ ИМЕНЕМ, а не под своим.
+      # Человек открыл его как «новую версию ролика»: звук там здоровый, а
+      # субтитров, названия выпуска и карточек нет. Совсем не класть нельзя —
+      # из него режут шортсы стадии post и shorts, и без него shorts.py
+      # срезает верх кадра из final.mp4, то есть роняет качество. Поэтому
+      # имя, из которого очевидно, что это исходник, а не ролик.
+      - name: Переименовать исходник шортсов в служебное имя
+        if: steps.out.outputs.dir != ''
+        run: |
+          D="${{ steps.out.outputs.dir }}"
+          [ -f "$D/clean.mp4" ] && cp "$D/clean.mp4" "$D/_shorts-source.mp4" || true
+          ls -1 "$D" | sed 's/^/  /'
+
       - name: Выдаём ролик, шортсы и обложки
         if: steps.pick.outputs.do_pack == 'true' || steps.pick.outputs.do_shorts == 'true'
         uses: softprops/action-gh-release@v2
@@ -506,15 +525,19 @@ jobs:
           body: |
             Длинный ролик, шортсов ${{ steps.out.outputs.shorts }}, обложек ${{ steps.out.outputs.covers }}.
 
-            `subs.srt` — субтитры для ручной заливки на YouTube после выкладки ролика.
-            `cover_1.jpg` продублирован в `thumbnail.jpg`; `cover_2.jpg` — запасной вариант.
+            `final.mp4` — готовый ролик, с вжжёнными субтитрами и карточками. Это то, что выкладывать.
+            `youtube.txt` — весь комплект для выкладки. `subs.srt` — субтитры, заливать руками после публикации.
+            `cover_1.jpg` продублирован в `thumbnail.jpg`; `cover_2.jpg` — второй вариант.
+            `_shorts-source.mp4` — СЛУЖЕБНЫЙ файл, исходник для нарезки шортсов. Не ролик, не открывать.
           files: |
             ${{ steps.out.outputs.dir }}/final.mp4
-            ${{ steps.out.outputs.dir }}/clean.mp4
             ${{ steps.out.outputs.dir }}/subs.srt
+            ${{ steps.out.outputs.dir }}/youtube.txt
+            ${{ steps.out.outputs.dir }}/shorts.json
             ${{ steps.out.outputs.dir }}/marks_final.json
             ${{ steps.out.outputs.dir }}/short_*.mp4
             ${{ steps.out.outputs.dir }}/cover_*.jpg
+            ${{ steps.out.outputs.dir }}/_shorts-source.mp4
           fail_on_unmatched_files: false
 
       - name: Комплект для выкладки отдельно

@@ -152,16 +152,33 @@ def visual_hooks(job, rules=None) -> tuple[str, str]:
     return gap, scale
 
 
-def _apply_ctr(scene: str, variant: str, rules: dict) -> str:
-    """Дописать блок CTR, если его ещё нет. Сюжет не переписывается."""
+def _apply_ctr(scene: str, variant: str, rules: dict, handwritten=False) -> str:
+    """
+    Дописать блок CTR, если его ещё нет. Сюжет не переписывается.
+
+    РУЧНОМУ ПРОМПТУ ДОПИСЫВАЕТСЯ ТОЛЬКО ГЕОМЕТРИЯ, и это не мелочь.
+    Раньше к нему клеились ещё `variant_gap` / `variant_scale` и
+    `crop_override` — рецепты, написанные под АВТОМАТИЧЕСКИЙ сюжет,
+    собранный из ключевых слов. На ручном промпте они прямо ему
+    противоречат: разобранный по блокам промпт про дом в Либерти-Сити
+    получал в хвост «extreme close-up of the actual artifact… a tiny
+    out-of-focus gavel/paddle BEHIND a giant foreground object» — лексику
+    аукционной лавки, которой в ролике нет вовсе, — и вдобавок второе,
+    другое указание про долю кадра. Две противоречащие инструкции в одном
+    промпте модель разрешает жребием, и половина обложек уезжает не туда.
+
+    Автоматический сюжет короткий и рецепт ему нужен — там всё как было.
+    """
     scene = (scene or "").strip()
     mark = _marker(rules)
     if mark in scene:
         return scene
+    block = (rules.get("constraint_block") or LEFT_THIRD).strip()
+    if handwritten:
+        return " ".join(b for b in (scene, block) if b)
     gap = (rules.get("variant_gap") or "").strip()
     scale = (rules.get("variant_scale") or "").strip()
     crop = (rules.get("crop_override") or "").strip()
-    block = (rules.get("constraint_block") or LEFT_THIRD).strip()
     recipe = gap if variant == "gap" else scale
     bits = [scene, crop, recipe, block]
     return " ".join(b.strip() for b in bits if b and b.strip())
@@ -235,14 +252,18 @@ def art_prompts(job, n=2):
     scenes = []
     if isinstance(specified, list):
         scenes = [str(p).strip() for p in specified if str(p).strip()]
+    hand = len(scenes)               # сколько сюжетов написано руками
     if len(scenes) < n:
         auto = _auto_scenes(job, rules)
         scenes = (scenes + auto)[:n] if scenes else auto
+        if not specified:
+            hand = 0
     variants = ("gap", "scale")
     out = []
     for i in range(n):
         scene = scenes[i] if i < len(scenes) else scenes[-1]
-        out.append(_apply_ctr(scene, variants[i % 2], rules))
+        out.append(_apply_ctr(scene, variants[i % 2], rules,
+                              handwritten=i < hand))
     return out
 
 
@@ -481,12 +502,14 @@ def main(job_path):
         raise SystemExit("не вышло ни одного фона: ни генерации, ни кадра")
 
     made = []
-    log(f"── текст обложки: «{kicker}»" + (f" / «{sub}»" if sub else ""))
+    lines = type_mod.cover_lines_all(job, COVER_COUNT)
     if job.get("cover_text_by_model"):
         log("  ! cover_text_by_model игнорируется — текст рисует шрифт канала")
     for i, bg in enumerate(backgrounds[:COVER_COUNT], 1):
+        k_i, s_i = lines[i - 1]
+        log(f"── текст обложки {i}: «{k_i}»" + (f" / «{s_i}»" if s_i else ""))
         dst = out / f"cover_{i}.jpg"
-        draw_title(bg, dst, kicker, sub)
+        draw_title(bg, dst, k_i, s_i)
         made.append(dst)
         log(f"  {dst.name}: {dst.stat().st_size // 1024} КБ")
 
