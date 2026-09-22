@@ -1436,6 +1436,27 @@ DENY_HINTS = ("invalid_api_key", "invalid api key", "incorrect api key",
               "invalid authentication", "no api key", "api key not found")
 
 
+def vision_on(job) -> bool:
+    """
+    Смотреть ли материал зрением xAI (vet.py).
+
+    ПРАВИЛО КАНАЛА: материал ищет и смотрит МОДЕЛЬ В ЧАТЕ, до пуша, а не
+    xAI в Actions (CLAUDE.md, первый раздел). Поэтому умолчание канала —
+    vet_vision false, и даже спецификация с true без ключа не роняет
+    прогон: платное зрение выключается громкой строкой, бесплатные ярусы
+    отбраковки (чёрный кадр, стоп-кадр, дубль) работают как всегда.
+    """
+    want = bool(job.get("vet_vision", False))
+    if want and not (os.environ.get("XAI_API_KEY") or "").strip():
+        if not getattr(vision_on, "_said", False):
+            log("  ! vet_vision в спецификации, но ключа xAI нет — зрение "
+                "xAI выключено; материал смотрит модель в чате "
+                "(scout.py), здесь только бесплатные проверки")
+            vision_on._said = True
+        return False
+    return want
+
+
 def check_keys(needs_xai=True):
     """
     Дёргает по одному дешёвому запросу на каждый ключ ДО того, как начнётся
@@ -1518,11 +1539,10 @@ def check_keys(needs_xai=True):
               {"Authorization": f"Bearer {xai}"})
     elif needs_xai:
         bad.append("XAI_API_KEY: ключа нет, а ролику он нужен — в "
-                   "спецификации есть image_prompts либо включено "
-                   "зрение (vet_vision)")
+                   "спецификации есть image_prompts (генерация)")
     else:
         log("  . XAI_API_KEY: ключа нет, и он не нужен — image_prompts "
-            "пуст, зрение выключено, материал закреплён ссылками")
+            "пуст, материал подобран и просмотрен моделью в чате")
     # ПРОВЕРЯЕМ ИМЕННО ВИДЕО. Раньше здесь стоял /v1/search — поиск по
     # фотографиям, которым мы не пользуемся вовсе: Pexels берётся только под
     # футаж. Ключ отвечал на фото 200 «принят», а на /videos/search — 401
@@ -2141,7 +2161,7 @@ def main(job_path, stage="all"):
     # раздувать кэш на гигабайт за раз.
     if stage == "vet":
         log("── отбраковка материала роботом (без скачивания)")
-        vet.vet_all(job, work, use_vision=job.get("vet_vision", True))
+        vet.vet_all(job, work, use_vision=vision_on(job))
         log("── что дал каждый запрос")
         yield_report(work, "footage", "clip")
         yield_report(work, "archive", "arch")
@@ -2150,7 +2170,7 @@ def main(job_path, stage="all"):
     if stage == "material":
         fetch_material(job, work)
         log("── отбраковка материала роботом")
-        vet.vet_all(job, work, use_vision=job.get("vet_vision", True))
+        vet.vet_all(job, work, use_vision=vision_on(job))
         log("── что дал каждый запрос")
         yield_report(work, "footage", "clip")
         yield_report(work, "archive", "arch")
@@ -2167,7 +2187,7 @@ def main(job_path, stage="all"):
                 if top_up_footage(job, work, need):
                     log("── отбраковка дозакачанного")
                     vet.vet_all(job, work,
-                                use_vision=job.get("vet_vision", True))
+                                use_vision=vision_on(job))
                     yield_report(work, "footage", "clip")
         else:
             log("  (длина ролика ещё не известна — дозакачка по факту "
@@ -2176,10 +2196,9 @@ def main(job_path, stage="all"):
         return
 
     log("── проверка ключей")
-    # Нужен ли этому ролику xAI вообще: генерация — только если есть
-    # промпты, зрение — только если не выключено спецификацией.
-    check_keys(needs_xai=bool(job.get("image_prompts"))
-               or bool(job.get("vet_vision", True)))
+    # Нужен ли этому ролику xAI вообще: только под генерацию. Зрение xAI
+    # без ключа выключается само (vision_on), прогон из-за него не падает.
+    check_keys(needs_xai=bool(job.get("image_prompts")))
 
     log("── озвучка")
     voice, marks, total = build_voice(job, work)
@@ -2272,7 +2291,7 @@ def main(job_path, stage="all"):
     fetch_material(job, work)
 
     log("── отбраковка материала роботом")
-    vet.vet_all(job, work, use_vision=job.get("vet_vision", True))
+    vet.vet_all(job, work, use_vision=vision_on(job))
 
     log("── что дал каждый запрос")
     yield_report(work, "footage", "clip")
@@ -2286,7 +2305,7 @@ def main(job_path, stage="all"):
     need = clips_needed(job, total)
     if top_up_footage(job, work, need):
         log("── отбраковка дозакачанного")
-        vet.vet_all(job, work, use_vision=job.get("vet_vision", True))
+        vet.vet_all(job, work, use_vision=vision_on(job))
         yield_report(work, "footage", "clip")
 
     log("── добор генерацией того, чего не хватило")
