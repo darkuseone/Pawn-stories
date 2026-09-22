@@ -6,6 +6,7 @@ scout.py — поиск материала ГЛАЗАМИ: сцены -> кан�
     python pipeline/scout.py pull    jobs/<id>.json      # листы из релиза scout-<job>
     python pipeline/scout.py pin     jobs/<id>.json s03-02 s07-01@12.5 ...
     python pipeline/scout.py check   jobs/<id>.json      # ссылки, 1080p, покрытие
+    python pipeline/scout.py audit   jobs/<id>.json [N]  # готовый ролик глазами
 
 ЗАЧЕМ ОТДЕЛЬНЫЙ ИНСТРУМЕНТ. Правило канала — материал выбирает модель в
 чате, глазами, и закрепляет прямыми ссылками ДО пуша (CLAUDE.md, «РАЗДЕЛЕНИЕ
@@ -91,16 +92,16 @@ def work_dir(job) -> Path:
 # url — что закрепляем; preview — лёгкая версия для кадров; thumbs — готовые
 # картинки-кадры, если источник их отдаёт (тогда ffmpeg не нужен).
 
-def _get(url, **kw):
-    # 429 у открытых API — не отказ, а «подожди»: Commons отдаёт его на
-    # общих адресах раннеров. Три попытки с паузой по Retry-After.
-    for attempt in range(4):
+def _get(url, tries=4, **kw):
+    # 429 у открытых API — не отказ, а «подожди». Три повтора с паузой по
+    # Retry-After; Commons зовёт с tries=1 — см. _commons.
+    for attempt in range(tries):
         try:
             r = requests.get(url, timeout=TIMEOUT, **kw)
         except requests.RequestException as e:
             log(f"    ! {url[:60]}: {e}")
             return None
-        if r.status_code != 429 or attempt == 3:
+        if r.status_code != 429 or attempt == tries - 1:
             break
         try:
             wait = min(30.0, float(r.headers.get("Retry-After") or 0))
@@ -155,7 +156,11 @@ def pixabay_video(q, n):
             if f.get("url") and MIN_W <= (f.get("width") or 0) <= MAX_W:
                 pick = f
                 break
-        if not pick:
+        # Вертикальное в кадр 16:9 не встанет. Фильтра по тегам здесь НЕТ
+        # сознательно: проверен на живой выдаче и выкидывал годное
+        # (смартфон под «phone calls»), оставляя чужое (воробей под «house
+        # keys») — теги Pixabay не говорят, что в кадре. Судья — зрение.
+        if not pick or (pick.get("height") or 0) > (pick.get("width") or 0):
             continue
         small = vv.get("tiny") or vv.get("small") or pick
         out.append(dict(src="pixabay", page=v.get("pageURL", ""),
@@ -208,15 +213,29 @@ def pixabay_photo(q, n):
     return out
 
 
+_COMMONS_DOWN = [False]
+
+
 def _commons(q, n, video: bool):
-    """Commons: только общественное достояние и CC0, атрибуцию не берём."""
-    r = _get("https://commons.wikimedia.org/w/api.php", headers=UA,
+    """Commons: только общественное достояние и CC0, атрибуцию не берём.
+
+    Первый же отказ (429 на общем адресе) выключает Commons до конца
+    прогона: повторы с паузой на каждый запрос стоили семи минут поиска
+    при нуле кандидатов с него.
+    """
+    if _COMMONS_DOWN[0]:
+        return []
+    r = _get("https://commons.wikimedia.org/w/api.php", headers=UA, tries=1,
              params={"action": "query", "generator": "search",
                      "gsrsearch": f"{q} filetype:{'video' if video else 'bitmap'}",
                      "gsrnamespace": 6, "gsrlimit": n * 3,
                      "prop": "imageinfo",
                      "iiprop": "url|size|extmetadata|mediatype",
                      "iiurlwidth": 640, "format": "json"})
+    if r is None:
+        _COMMONS_DOWN[0] = True
+        log("    ! Commons не отвечает — до конца прогона ищу без него")
+        return []
     out = []
     pages = (r.json().get("query", {}).get("pages", {}) if r else {}) or {}
     for page in sorted(pages.values(), key=lambda p: p.get("index", 0)):
@@ -300,10 +319,16 @@ def frames_for(c, folder: Path, cid: str):
     заставка и затемнение, по ним клип не оценить.
     """
     folder.mkdir(parents=True, exist_ok=True)
+    # Кэш кадров — по ССЫЛКЕ, а не по номеру кандидата. Номера s01-01…
+    # при новом поиске выдаются заново, и кэш по номеру подставлял под
+    # подпись нового кандидата кадры старого: лист врал ровно там, где на
+    # нём принимается решение.
+    import hashlib
+    key = hashlib.sha1(c["url"].encode()).hexdigest()[:12]
     out = []
     if c["thumbs"]:
         for k, u in enumerate(c["thumbs"]):
-            p = folder / f"{cid}_{k}.jpg"
+            p = folder / f"{key}_{k}.jpg"
             if p.exists() or _download(u, p):
                 out.append(p)
         return out
@@ -315,7 +340,7 @@ def frames_for(c, folder: Path, cid: str):
         c["w"], c["h"] = c["w"] or w, c["h"] or h
     dur = c["dur"] or 10
     for k, frac in enumerate((0.1, 0.5, 0.9)):
-        p = folder / f"{cid}_{k}.jpg"
+        p = folder / f"{key}_{k}.jpg"
         if p.exists() or _grab(c["preview"], dur * frac, p):
             out.append(p)
     return out
@@ -605,8 +630,92 @@ def cmd_check(job, _args):
         raise SystemExit(1)
 
 
+def _wrap(text, width):
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = (cur + " " + w).strip()
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def cmd_audit(job, args):
+    """
+    ГОТОВЫЙ РОЛИК ГЛАЗАМИ: кадр посреди фразы + сама фраза, на листах.
+
+    Обязательная проверка после сборки (CLAUDE.md, «ГОТОВЫЙ РОЛИК
+    ПРОВЕРЯЕТСЯ ГЛАЗАМИ»): соответствует ли картинка тексту, который в эту
+    секунду звучит. Ролик НЕ качается целиком — ffmpeg читает по ссылке
+    релиза только нужные кадры. Берётся исходник шортсов (без субтитров,
+    они закрывали бы низ кадра), нет его — final.mp4. Шкала — та же
+    marks_final.json из релиза, по ней резались и субтитры.
+
+    N — сколько фраз (умолчание 24), равномерно по ролику. Листы по 12
+    кадров: work/<id>/scout/audit_N.jpg.
+    """
+    from PIL import Image, ImageDraw
+    n = int(args[0]) if args else 24
+    tag = f"final-{Path(sys.argv[2]).stem}"
+    base = f"https://github.com/{REPO}/releases/download/{tag}"
+    r = _get(f"https://api.github.com/repos/{REPO}/releases/tags/{tag}")
+    if not r:
+        raise SystemExit(f"релиза {tag} нет — ролик ещё не собран")
+    names = {a["name"] for a in r.json().get("assets", [])}
+    video = next((v for v in ("_shorts-source.mp4", "clean.mp4", "final.mp4")
+                  if v in names), None)
+    if not video or "marks_final.json" not in names:
+        raise SystemExit(f"в {tag} нет видео или marks_final.json")
+    marks = _get(f"{base}/marks_final.json").json()
+    step = max(1, len(marks) // n)
+    pick = [(i, m) for i, m in enumerate(marks)][::step][:n]
+    out = work_dir(job) / "audit"
+    out.mkdir(parents=True, exist_ok=True)
+
+    def grab(item):
+        i, m = item
+        t = (m["start"] + m["end"]) / 2
+        p = out / f"f_{i:03d}.jpg"
+        ok = p.exists() or _grab(f"{base}/{video}", t, p)
+        return i, m, t, (p if ok else None)
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        got = list(ex.map(grab, pick))
+    tw, th, lines = THUMB_W + 160, (THUMB_W + 160) * 9 // 16, 4
+    cell_h = th + lines * 20 + 10
+    small = _font(16)
+    rows = []
+    for k in range(0, len(got), 12):
+        part = got[k:k + 12]
+        im = Image.new("RGB", (tw * 3, cell_h * ((len(part) + 2) // 3)), (18, 18, 18))
+        d = ImageDraw.Draw(im)
+        for c, (i, m, t, p) in enumerate(part):
+            x, y = (c % 3) * tw, (c // 3) * cell_h
+            if p:
+                fr = Image.open(p).convert("RGB")
+                fr = fr.resize((tw - 4, th - 4))
+                im.paste(fr, (x + 2, y + 2))
+            label = f"#{i} {int(t // 60)}:{int(t % 60):02d}  " + m["text"]
+            for L, line in enumerate(_wrap(label, 58)[:lines]):
+                d.text((x + 6, y + th + 2 + L * 20), line,
+                       fill=(255, 230, 150) if L == 0 else (235, 235, 235),
+                       font=small)
+        dst = work_dir(job) / f"audit_{k // 12 + 1}.jpg"
+        im.save(dst, quality=85)
+        rows.append(dst)
+    (work_dir(job) / "audit.json").write_text(json.dumps(
+        [{"i": i, "t": round(t, 1), "text": m["text"]} for i, m, t, _p in got],
+        ensure_ascii=False, indent=1))
+    log(f"кадров {len(got)} из {len(marks)} фраз ({video}); листы:")
+    for p in rows:
+        log(f"  {p.relative_to(ROOT)}")
+
+
 COMMANDS = {"outline": cmd_outline, "search": cmd_search, "pull": cmd_pull,
-            "pin": cmd_pin, "check": cmd_check}
+            "pin": cmd_pin, "check": cmd_check, "audit": cmd_audit}
 
 
 def main():
