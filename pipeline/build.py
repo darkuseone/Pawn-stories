@@ -232,9 +232,12 @@ class ShotPicker:
     PRIOR_WEIGHT = 0.5
 
     def __init__(self, pool, total: float, prior=None, cap: int = None,
-                 bound=None):
+                 bound=None, preferred=None):
         # pool: [(path, tag, keywords), ...]
         self.pool = pool
+        # ЗАКРЕПЛЁННОЕ ВПЕРЁД ЗАПАСНОГО: индексы файлов, которые выбраны
+        # глазами (pinned_*). См. score().
+        self.preferred = set(preferred or ())
         # ПРИВЯЗКА К ФРАЗЕ: {индекс файла: [(начало, конец), ...]} — окна
         # предложений, под которые файл выбран глазами (поле at у
         # закреплённого материала, см. pinned_bindings). Под своей фразой
@@ -328,8 +331,18 @@ class ShotPicker:
             # по таймлайну
             # Привязанный файл под СВОЕЙ фразой идёт мимо потолка повторов:
             # это решение, принятое глазами, а не удача совпадения слов.
+            # ЗАКРЕПЛЁННОЕ ВЫШЕ СОВПАДЕНИЯ СЛОВ. Запасной пул набран
+            # словесными запросами, и его слова — это слова запроса, а не
+            # содержимое кадра: на ms-ep01 под фразу про «Earl J.» вышел
+            # титульный лист книги Доре (в запросе было Earl), под
+            # «тридцать звонков в день» — картина со Сократом, потому что
+            # её реже показывали. Проверка глазами готового ролика нашла
+            # таких кадров около половины во второй его половине. Пока
+            # хоть один закреплённый файл младше потолка повторов, запас
+            # не выходит вовсе.
+            pref = 1 if j in self.preferred else 0
             return (0 if hit else over_cap, same, -hit, reserved,
-                    -overlap, used, abs(j - k), j)
+                    -pref, -overlap, used, abs(j - k), j)
 
         best = min(range(n), key=score)
         if best in here:
@@ -518,6 +531,32 @@ def pinned_bindings(assets: Path, job, marks):
                 out.setdefault(key, []).append(
                     (marks[idx[0]]["start"], marks[idx[-1]]["end"]))
     return out, missed
+
+
+def pinned_files(assets: Path, job):
+    """
+    Ключи (префикс, номер) файлов, закреплённых глазами: их url стоит в
+    pinned_* спецификации, либо манифест помечает их src="pinned".
+    """
+    urls = {it.get("url") for f in ("pinned_footage", "pinned_archive")
+            for it in (job or {}).get(f) or [] if isinstance(it, dict)}
+    out = set()
+    for folder in ("footage", "archive"):
+        man = assets / folder / "_manifest.json"
+        if not man.exists():
+            continue
+        try:
+            rows = json.loads(man.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        for row in rows:
+            if row.get("url") in urls or row.get("src") == "pinned":
+                name = Path(row.get("file", "")).name
+                try:
+                    out.add((name.split("_")[0], int(name.split("_")[1])))
+                except (IndexError, ValueError):
+                    continue
+    return out
 
 
 def keywords_for(assets: Path, job):
@@ -738,6 +777,19 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     # место сценария (поле at). Индексы — по позиции файла в своём пуле.
     binds, bind_missed = pinned_bindings(assets, job, marks)
 
+    pinned = pinned_files(assets, job)
+
+    def pinned_of(paths):
+        out = set()
+        for j, p in enumerate(paths):
+            try:
+                key = (p.stem.split("_")[0], int(p.stem.split("_")[1]))
+            except (IndexError, ValueError):
+                continue
+            if key in pinned:
+                out.add(j)
+        return out
+
     def bound_of(paths):
         out = {}
         for j, p in enumerate(paths):
@@ -752,9 +804,14 @@ def plan_shots(marks, st, assets, total, job_reject=None, job=None):
     gen_pick = ShotPicker([(p, "gen", kw_of(p)) for p in images], total, prior,
                          cap=MAX_IMAGE_REPEATS)
     arch_pick = ShotPicker([(p, "arch", kw_of(p)) for p in archive], total, prior,
-                          cap=MAX_IMAGE_REPEATS, bound=bound_of(archive))
+                          cap=MAX_IMAGE_REPEATS, bound=bound_of(archive),
+                          preferred=pinned_of(archive))
     clip_pick = ShotPicker([(p, "clip", kw_of(p)) for p in clips], total, prior,
-                          bound=bound_of(clips))
+                          bound=bound_of(clips), preferred=pinned_of(clips))
+    if clip_pick.preferred or arch_pick.preferred:
+        log(f"  закреплено глазами: видео {len(clip_pick.preferred)} из "
+            f"{len(clips)}, фото {len(arch_pick.preferred)} из {len(archive)} "
+            f"— запасной пул выходит, только когда они упёрлись в потолок")
     n_bound = len(clip_pick.bound) + len(arch_pick.bound)
     if n_bound or bind_missed:
         log(f"  привязки к фразам: {n_bound} файлов "
