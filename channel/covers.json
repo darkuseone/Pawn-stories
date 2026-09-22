@@ -1,32 +1,34 @@
 {
-  "_": "Правила CTR для фонов обложек. Геометрия ( Oswald слева, TEXT_ZONE ) живёт в covers.py и не меняется отсюда. Этот файл читает covers.art_prompts() и дописывает блок к КАЖДОМУ промпту — и к youtube.cover_prompts, и к запасным. Правка «на будущее» сюда, а не в семь спецификаций: иначе следующий ролик уедет со старым «пустой левый край» без правила 120 px.",
-  "_зачем": "Большинство кликов — с телефона, где превью ~120 px в ширину (suggested / search / up-next), не 1280. На таком размере выживает один огромный предмет и жёсткий контраст по яркости, а не витрина лавки. Канал без ведущего: героем кадра должен быть tension object (пустая рама, печать, коробка, треснувшая доска), не лицо блогера. YouTube Test & Compare выбирает победителя по watch time, не по сырому CTR — кликбейт с ответом в картинке проигрывает.",
-  "marker": "CHANNEL COVER CTR:",
-  "constraint_block": "CHANNEL COVER CTR: Compose for a phone thumbnail ~120 pixels wide, not the 1280 canvas. ONE dominant subject only, occupying the entire RIGHT HALF of the 16:9 frame (about 45–55% of the image area), large enough that a 10x shrink still shows WHAT the object is. Place that hero in the right-center, vertically mid-frame. Leave the LEFT ~40% dark, empty, uncluttered — no objects, no text, no letters, no numbers, no dollar signs, no logos, no watermarks, no captions; title type is composited later. Never put the hero in the bottom-right corner (YouTube duration badge) or the far bottom edge (progress bar). Hard luminance contrast: the subject is much brighter OR much darker than the background, with a single warm key light and deep falloff — hue-only contrast turns to mud at 120px. No wide establishing shot of a shop, gallery, attic, courtroom, or auction room where the object is a small thing on a table. No collage, split-screen, before/after grid, UI chrome, or extra people. Photoreal cinematic still, shallow depth of field, 8k detail on the hero only. Imply a question; do not depict the answer or any readable writing.",
-  "variant_gap": "VARIANT A — curiosity gap / visual hole, not a catalog shot. Show ABSENCE or tension: empty ornate frame, bare iron pegs, unopened seal, silhouette with a hole, object wrapped and hidden. The missing or sealed thing IS the giant right-half subject.",
-  "variant_scale": "VARIANT B — a DIFFERENT story from A, not another angle of the same room. Extreme close-up of the actual artifact filling the right half, or gloved hands plus that artifact, or a tiny out-of-focus gavel/paddle BEHIND a giant foreground object. Scale and deal, not atmosphere.",
-  "crop_override": "If the scene below is a wide room, IGNORE the wide composition: crop until one named object fills the right half. Discard extra props.",
-  "skip_keywords": [
-    "auction records",
-    "antique appraisal",
-    "collecting market",
-    "retro video game collecting market",
-    "video game collecting",
-    "thrift store find",
-    "hidden wealth",
-    "sothebys",
-    "christies",
-    "lawsuit"
-  ],
-  "forbidden_in_auto": [
-    "antique shop",
-    "thrift store interior",
-    "busy shop",
-    "wide gallery",
-    "establishing shot of a room",
-    "crowded auction house interior as the subject"
-  ],
-  "_шаблон": "Шаблон сюжета с плейсхолдерами. {ITEM} — сам предмет находки (ключевое слово или глава), {ERA} — эпоха/год, если он есть в теме. СУММЫ В ШАБЛОНЕ НЕТ СОЗНАТЕЛЬНО: канал давно решил, что буквы и цифры на обложке рисует PIL шрифтом канала, а не модель — она путает цифры и дописывает лишние нули. Сумма живёт в cover_sub и попадает на обложку отрисовкой, а не генерацией. Плейсхолдер, который модель нарисует неправильно, хуже отсутствующего.",
-  "scene_template_gap": "Hyperrealistic 16:9 YouTube thumbnail, cinematic still. CURIOSITY GAP: {ITEM} shown as ABSENCE or concealment — sealed, wrapped, empty, shut, or missing from where it should be. That absence is the single giant subject and fills the entire right half of the frame in an extreme close crop. {ERA} styling in the materials and wear, no props beyond the subject itself. Single warm key light from the right, deep black falloff into the empty left side.",
-  "scene_template_scale": "Hyperrealistic 16:9 YouTube thumbnail, cinematic still. A DIFFERENT story from the first cover, not another angle of the same room: extreme macro of {ITEM} itself filling the entire right half — surface texture, edge wear and maker's marks readable — or white-gloved hands holding it, with any gavel, paddle or price tag tiny and out of focus far behind. {ERA} materials. Scale and deal, not atmosphere."
+ "_": "Правила CTR для фонов обложек. Геометрия ( Oswald слева, TEXT_ZONE ) живёт в covers.py и не меняется отсюда. Этот файл читает covers.art_prompts() и дописывает блок к КАЖДОМУ промпту — и к youtube.cover_prompts, и к запасным. Правка «на будущее» сюда, а не в семь спецификаций: иначе следующий ролик уедет со старым «пустой левый край» без правила 120 px.",
+ "_зачем": "Большинство кликов — с телефона, где превью ~120 px в ширину. На таком размере выживает один огромный герой и жёсткий контраст по ЯРКОСТИ. ГЕОМЕТРИЯ БЛОКА СОВПАДАЕТ С КОДОМ: covers.TEXT_ZONE = 0.56, то есть текст занимает ЛЕВЫЕ 56%, герою остаются ПРАВЫЕ 44%. Раньше блок говорил «левые 40%» — на 16 процентных пунктов мимо, и герой заезжал под заголовок. Меняешь TEXT_ZONE — меняй и это число, они обязаны совпадать.",
+ "marker": "CHANNEL COVER CTR:",
+ "constraint_block": "CHANNEL COVER CTR: Compose for a phone thumbnail about 120 pixels wide, not the 1280 canvas. The LEFT 56% of the 16:9 frame must stay a deep near-black shadow field: empty, uncluttered, no objects, no faces, no text, no letters, no numbers, no dollar signs, no logos, no watermarks, no captions — large white type is composited over that zone later. ONE dominant subject only, living entirely in the RIGHT 44% of the frame, large enough that a 10x shrink still shows WHAT it is. Never put the subject in the bottom-right corner (YouTube duration badge) or along the bottom edge (progress bar). Hard LUMINANCE contrast: the subject is much brighter than its surroundings, lit by a single warm low key light from the right with fast deep falloff — hue-only contrast turns to mud at 120px. Photoreal cinematic still, shallow depth of field, 8k detail on the hero only, fine natural film grain, deep true blacks, no HDR glow, no lens flare, no bloom. No collage, no split screen, no before/after grid, no UI chrome, no borders, no illustration, no 3D render look, no cartoon. Imply a question; do not depict the answer or any readable writing.",
+ "variant_gap": "VARIANT A — curiosity gap / visual hole, not a catalog shot. Show ABSENCE or tension: empty ornate frame, bare iron pegs, unopened seal, silhouette with a hole, object wrapped and hidden. The missing or sealed thing IS the giant right-half subject.",
+ "variant_scale": "VARIANT B — a DIFFERENT story from A, not another angle of the same room. Extreme close-up of the actual artifact filling the right half, or gloved hands plus that artifact, or a tiny out-of-focus gavel/paddle BEHIND a giant foreground object. Scale and deal, not atmosphere.",
+ "crop_override": "If the scene below is a wide room, IGNORE the wide composition: crop until one named object fills the right half. Discard extra props.",
+ "skip_keywords": [
+  "auction records",
+  "antique appraisal",
+  "collecting market",
+  "retro video game collecting market",
+  "video game collecting",
+  "thrift store find",
+  "hidden wealth",
+  "sothebys",
+  "christies",
+  "lawsuit"
+ ],
+ "forbidden_in_auto": [
+  "antique shop",
+  "thrift store interior",
+  "busy shop",
+  "wide gallery",
+  "establishing shot of a room",
+  "crowded auction house interior as the subject"
+ ],
+ "_шаблон": "Шаблон сюжета с плейсхолдерами. {ITEM} — сам предмет находки (ключевое слово или глава), {ERA} — эпоха/год, если он есть в теме. СУММЫ В ШАБЛОНЕ НЕТ СОЗНАТЕЛЬНО: канал давно решил, что буквы и цифры на обложке рисует PIL шрифтом канала, а не модель — она путает цифры и дописывает лишние нули. Сумма живёт в cover_sub и попадает на обложку отрисовкой, а не генерацией. Плейсхолдер, который модель нарисует неправильно, хуже отсутствующего.",
+ "scene_template_gap": "Hyperrealistic 16:9 YouTube thumbnail, cinematic still. CURIOSITY GAP: {ITEM} shown as ABSENCE or concealment — sealed, wrapped, empty, shut, or missing from where it should be. That absence is the single giant subject and fills the entire right half of the frame in an extreme close crop. {ERA} styling in the materials and wear, no props beyond the subject itself. Single warm key light from the right, deep black falloff into the empty left side.",
+ "scene_template_scale": "Hyperrealistic 16:9 YouTube thumbnail, cinematic still. A DIFFERENT story from the first cover, not another angle of the same room: extreme macro of {ITEM} itself filling the entire right half — surface texture, edge wear and maker's marks readable — or white-gloved hands holding it, with any gavel, paddle or price tag tiny and out of focus far behind. {ERA} materials. Scale and deal, not atmosphere.",
+ "_стиль_канала": "СТИЛЬ ОБЛОЖЕК КАНАЛА, снят с уже выложенных роликов. Слева белый Oswald Bold капсом в 2-4 строки с РАЗНЫМ кеглем: сумма или число — самая крупная строка, остальное мельче («$10M» крупно, «IN A RUSTY CAN» мельче). Текст рисует PIL шрифтом канала, модель не пишет ни буквы. Справа — тёмный гиперреалистичный кадр с ОДНИМ героем, тёплый контровой свет, глубокая тень, уходящая влево под текст. Герой — настоящий предмет или живой человек, снятый как документальный кадр, а не студийная витрина. Формула текста: либо сумма впереди («$4 PAINTING MADE HIM A MILLIONAIRE»), либо разрыв знания («3 FOUND FORTUNES. ONLY 1 PAID OFF.»). Никаких «YOU WON'T BELIEVE» и капс-простыней.",
+ "_ручной_промпт": "РУЧНОМУ ПРОМПТУ ИЗ youtube.cover_prompts ДОПИСЫВАЕТСЯ ТОЛЬКО constraint_block. variant_gap / variant_scale / crop_override написаны под АВТОМАТИЧЕСКИЙ сюжет из ключевых слов и ручному прямо противоречат: промпт про дом в Майами получал в хвост «a tiny out-of-focus gavel/paddle BEHIND a giant foreground object» — лексику аукционной лавки, которой в ролике нет. Две противоречащие инструкции в одном промпте модель разрешает жребием."
 }

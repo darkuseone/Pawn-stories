@@ -115,6 +115,40 @@ def _split_overlay(overlay: str) -> tuple[str, str]:
     return "", ""
 
 
+def cover_lines_all(job: dict, n: int) -> list[tuple[str, str]]:
+    """
+    Текст КАЖДОЙ обложки отдельно: [(крючок, вторая строка), …] длиной n.
+
+    Обложки у канала два РАЗНЫХ сюжета, и текст на них тоже должен быть
+    разным: на визуальной дыре работает одна фраза, на сделке — другая.
+    Раньше `cover_lines` отдавала одну пару, и она рисовалась на обеих —
+    два разных кадра с одинаковой надписью читаются как одна обложка,
+    выложенная дважды, и Test & Compare сравнивать становится нечего.
+
+    Списки в `youtube.cover_kicker` / `cover_sub` разбираются поэлементно;
+    строка (как во всех прежних спецификациях) означает «одно и то же на
+    все» и работает ровно как раньше. Короткий список добивается
+    последним элементом, а не пустотой: обложка без надписи хуже
+    повторённой.
+    """
+    y = job.get("youtube") or {}
+
+    def as_list(v):
+        if isinstance(v, (list, tuple)):
+            return [_upper(str(x)) for x in v if str(x).strip()]
+        return [_upper(str(v))] if str(v or "").strip() else []
+
+    ks, subs = as_list(y.get("cover_kicker")), as_list(y.get("cover_sub"))
+    if not ks:                      # полей нет — прежний черновик из title
+        k, sb = cover_lines(job)
+        ks, subs = [k], [sb]
+    out = []
+    for i in range(n):
+        out.append((ks[min(i, len(ks) - 1)],
+                    subs[min(i, len(subs) - 1)] if subs else ""))
+    return out
+
+
 def cover_lines(job: dict) -> tuple[str, str]:
     """
     Крючок обложки (3–5 слов) и короткая вторая строка с цифрой.
@@ -125,8 +159,12 @@ def cover_lines(job: dict) -> tuple[str, str]:
     sub), иначе двоеточие в title / первые пять слов.
     """
     y = job.get("youtube") or {}
-    kicker = _upper(y.get("cover_kicker") or "")
-    sub = _upper(y.get("cover_sub") or "")
+    def _first(v):
+        if isinstance(v, (list, tuple)):
+            return str(v[0]) if v else ""
+        return str(v or "")
+    kicker = _upper(_first(y.get("cover_kicker")))
+    sub = _upper(_first(y.get("cover_sub")))
     if kicker:
         return kicker, sub
     overlay = ((job.get("_превью_промпт") or {}).get("overlay_text") or "").strip()
